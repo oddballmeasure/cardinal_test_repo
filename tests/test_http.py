@@ -73,6 +73,31 @@ class NotesHTTPTests(unittest.TestCase):
         self.assertTrue(content_type.startswith("application/json"))
         self.assertEqual(body, [first[2], second[2]])
 
+    def test_retrieve_note_preserves_ordered_list(self) -> None:
+        first = self.request("/notes", {"title": "Café", "tags": ["personal"]})
+        second = self.request("/notes", {"title": "Plan", "tags": ["work", "urgent"]})
+        self.assertEqual([first[0], second[0]], [201, 201])
+        status, content_type, body = self.request(f"/notes/{second[2]['id']}")
+        self.assertEqual(status, 200)
+        self.assertTrue(content_type.startswith("application/json"))
+        self.assertEqual(body, second[2])
+        status, _, body = self.request(f"/notes/{first[2]['id']}")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, first[2])
+        status, content_type, body = self.request("/notes")
+        self.assertEqual(status, 200)
+        self.assertTrue(content_type.startswith("application/json"))
+        self.assertEqual(body, [first[2], second[2]])
+
+    def test_unknown_and_nonnumeric_note_ids_return_json_404(self) -> None:
+        self.request("/notes", {"title": "Existing", "tags": []})
+        for path in ("/notes/999", "/notes/not-an-id"):
+            with self.subTest(path=path):
+                status, content_type, body = self.request(path)
+                self.assertEqual(status, 404)
+                self.assertTrue(content_type.startswith("application/json"))
+                self.assertEqual(body, {"error": "not found"})
+
     def test_invalid_note_does_not_change_list(self) -> None:
         status, _, body = self.request("/notes", {"title": "", "tags": ["work"]})
         self.assertEqual(status, 400)

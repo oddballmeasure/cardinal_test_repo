@@ -25,6 +25,18 @@ class NotesHandler(BaseHTTPRequestHandler):
             self.send_json(200, {"status": "ok"})
         elif path == "/notes":
             self.send_json(200, self.store.list_notes())
+        elif path.startswith("/notes/"):
+            note_id = path[len("/notes/"):]
+            note = None
+            if note_id.isascii() and note_id.isdecimal():
+                try:
+                    note = self.store.get(int(note_id))
+                except ValueError:  # IDs beyond Python's integer conversion limit
+                    pass
+            if note is None:
+                self.send_json(404, {"error": "not found"})
+            else:
+                self.send_json(200, note)
         else:
             self.send_json(404, {"error": "not found"})
 
