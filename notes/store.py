@@ -10,5 +10,10 @@ class NoteStore:
         self._notes.append(note)
         return note.copy()
 
+    def get(self, note_id: int) -> dict | None:
+        if 1 <= note_id <= len(self._notes):
+            return self._notes[note_id - 1].copy()
+        return None
+
     def list_notes(self) -> list[dict]:
         return [note.copy() for note in self._notes]

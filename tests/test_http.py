@@ -73,6 +73,31 @@ class NotesHTTPTests(unittest.TestCase):
         self.assertTrue(content_type.startswith("application/json"))
         self.assertEqual(body, [first[2], second[2]])
 
+    def test_retrieve_notes_and_failed_lookups_preserve_order(self) -> None:
+        created = [
+            self.request("/notes", {"title": "Café", "tags": ["personal"]}),
+            self.request("/notes", {"title": "Plan", "tags": ["work", "urgent"]}),
+            self.request("/notes", {"title": "Last", "tags": []}),
+        ]
+        for response in created:
+            self.assertEqual(response[0], 201)
+            status, content_type, body = self.request(f"/notes/{response[2]['id']}")
+            self.assertEqual(status, 200)
+            self.assertTrue(content_type.startswith("application/json"))
+            self.assertEqual(body, response[2])
+
+        for path in ("/notes/999", "/notes/not-a-number", "/notes/1/extra"):
+            with self.subTest(path=path):
+                status, content_type, body = self.request(path)
+                self.assertEqual(status, 404)
+                self.assertTrue(content_type.startswith("application/json"))
+                self.assertEqual(body, {"error": "not found"})
+
+        status, content_type, body = self.request("/notes")
+        self.assertEqual(status, 200)
+        self.assertTrue(content_type.startswith("application/json"))
+        self.assertEqual(body, [response[2] for response in created])
+
     def test_invalid_note_does_not_change_list(self) -> None:
         status, _, body = self.request("/notes", {"title": "", "tags": ["work"]})
         self.assertEqual(status, 400)
