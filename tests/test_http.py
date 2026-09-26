@@ -42,12 +42,13 @@ class NotesHTTPTests(unittest.TestCase):
             self.process.wait(timeout=2)
         self.process.stderr.close()
 
-    def request(self, path: str, payload: dict | None = None) -> tuple[int, str, object]:
+    def request(self, path: str, payload: dict | None = None, *, method: str | None = None) -> tuple[int, str, object]:
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         request = Request(
             self.base + path,
             data=body,
             headers={"Content-Type": "application/json"} if body is not None else {},
+            method=method,
         )
         try:
             response = urlopen(request, timeout=2)
@@ -105,6 +106,51 @@ class NotesHTTPTests(unittest.TestCase):
         status, _, body = self.request("/notes")
         self.assertEqual(status, 200)
         self.assertEqual(body, [])
+
+    def test_patch_title_preserves_tags_and_id(self) -> None:
+        original = self.request("/notes", {"title": "First", "tags": ["personal"]})[2]
+        updated = {"id": original["id"], "title": "Revised", "tags": ["personal"]}
+        status, content_type, body = self.request("/notes/1", {"title": "Revised"}, method="PATCH")
+        self.assertEqual(status, 200)
+        self.assertTrue(content_type.startswith("application/json"))
+        self.assertEqual(body, updated)
+        self.assertEqual(self.request("/notes/1")[2], updated)
+
+    def test_patch_unicode_tags_preserves_title_id_and_list_order(self) -> None:
+        first = self.request("/notes", {"title": "First", "tags": ["old"]})[2]
+        second = self.request("/notes", {"title": "Second", "tags": ["work"]})[2]
+        last = self.request("/notes", {"title": "Last", "tags": []})[2]
+        updated = {"id": second["id"], "title": second["title"], "tags": ["café", "東京"]}
+        status, content_type, body = self.request("/notes/2", {"tags": updated["tags"]}, method="PATCH")
+        self.assertEqual(status, 200)
+        self.assertTrue(content_type.startswith("application/json"))
+        self.assertEqual(body, updated)
+        self.assertEqual(self.request("/notes/2")[2], updated)
+        self.assertEqual(self.request("/notes")[2], [first, updated, last])
+
+    def test_invalid_patch_and_unknown_id_do_not_change_notes(self) -> None:
+        first = self.request("/notes", {"title": "First", "tags": ["old"]})[2]
+        second = self.request("/notes", {"title": "Second", "tags": []})[2]
+        for payload, error_field in (
+            ({"title": "  "}, "title"),
+            ({"tags": ["valid", ""]}, "tags"),
+            ({"title": "Changed", "tags": [123]}, "tags"),
+            ({"tags": "not a list"}, "tags"),
+        ):
+            with self.subTest(payload=payload):
+                status, content_type, body = self.request("/notes/1", payload, method="PATCH")
+                self.assertEqual(status, 400)
+                self.assertTrue(content_type.startswith("application/json"))
+                self.assertIn(error_field, body["error"])
+                self.assertEqual(self.request("/notes/1")[2], first)
+                self.assertEqual(self.request("/notes")[2], [first, second])
+
+        status, content_type, body = self.request("/notes/999", {"title": "Missing"}, method="PATCH")
+        self.assertEqual(status, 404)
+        self.assertTrue(content_type.startswith("application/json"))
+        self.assertEqual(body, {"error": "not found"})
+        self.assertEqual(self.request("/notes/1")[2], first)
+        self.assertEqual(self.request("/notes")[2], [first, second])
 
     def test_unknown_route_returns_not_found(self) -> None:
         status, _, body = self.request("/missing")

@@ -15,5 +15,15 @@ class NoteStore:
             return self._notes[note_id - 1].copy()
         return None
 
+    def update(self, note_id: int, *, title: str | None = None, tags: list[str] | None = None) -> dict | None:
+        if not 1 <= note_id <= len(self._notes):
+            return None
+        note = self._notes[note_id - 1]
+        if title is not None:
+            note["title"] = title
+        if tags is not None:
+            note["tags"] = list(tags)
+        return note.copy()
+
     def list_notes(self) -> list[dict]:
         return [note.copy() for note in self._notes]
