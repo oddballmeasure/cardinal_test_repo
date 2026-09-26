@@ -17,5 +17,16 @@ class NoteStore:
         note = self._notes[note_id - 1]
         return {"id": note["id"], "title": note["title"], "tags": list(note["tags"])}
 
+    def update(self, note_id: int, *, title: str | None = None, tags: list[str] | None = None) -> dict | None:
+        """Change only supplied fields of an existing note, keeping its list position."""
+        if not 1 <= note_id <= len(self._notes):
+            return None
+        note = self._notes[note_id - 1]
+        if title is not None:
+            note["title"] = title
+        if tags is not None:
+            note["tags"] = list(tags)
+        return self.get(note_id)
+
     def list_notes(self) -> list[dict]:
         return [note.copy() for note in self._notes]

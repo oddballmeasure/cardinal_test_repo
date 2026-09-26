@@ -59,6 +59,43 @@ class NotesHandler(BaseHTTPRequestHandler):
             return
         self.send_json(201, self.store.create(payload["title"], tags))
 
+    def do_PATCH(self) -> None:
+        path = urlsplit(self.path).path
+        if not path.startswith("/notes/"):
+            self.send_json(404, {"error": "not found"})
+            return
+        note_id = path[len("/notes/"):]
+        if not note_id.isascii() or not note_id.isdecimal():
+            self.send_json(404, {"error": "not found"})
+            return
+        try:
+            note_id_number = int(note_id)
+        except ValueError:  # IDs beyond Python's integer conversion limit
+            self.send_json(404, {"error": "not found"})
+            return
+        if self.store.get(note_id_number) is None:
+            self.send_json(404, {"error": "not found"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length))
+        except (ValueError, UnicodeDecodeError):
+            self.send_json(400, {"error": "invalid JSON body"})
+            return
+        if not isinstance(payload, dict) or not ("title" in payload or "tags" in payload):
+            self.send_json(400, {"error": "title or tags required"})
+            return
+        if "title" in payload and (not isinstance(payload["title"], str) or not payload["title"].strip()):
+            self.send_json(400, {"error": "title must be a nonempty string"})
+            return
+        if "tags" in payload and (not isinstance(payload["tags"], list) or any(
+            not isinstance(tag, str) or not tag for tag in payload["tags"]
+        )):
+            self.send_json(400, {"error": "tags must be a list of nonempty strings"})
+            return
+        updated = self.store.update(note_id_number, title=payload.get("title"), tags=payload.get("tags"))
+        self.send_json(200, updated)
+
     def log_message(self, format: str, *args: object) -> None:
         pass
 
