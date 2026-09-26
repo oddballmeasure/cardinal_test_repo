@@ -20,7 +20,15 @@ curl http://127.0.0.1:8000/notes
 
 `POST /notes` accepts a nonempty `title` and a list of nonempty string `tags`.
 It returns the new note with a numeric ID. `GET /notes` returns notes in creation
-order as JSON, and `GET /health` returns `{"status":"ok"}`.
+order as JSON. Use `GET /notes?tag=work` to return only notes with a tag
+exactly matching `work` (case-insensitive), still in creation order as JSON;
+for example, `WORK` matches but `workshop` does not. An unmatched tag returns
+an empty JSON list. For CSV instead of JSON, use `GET /notes?format=csv`:
+its UTF-8 `text/csv` response has columns `id,title,tags` and one row per note,
+with tags joined by semicolons. CSV quotes fields containing commas, quotes, or
+line breaks. Combine filtering and export with `GET /notes?tag=WORK&format=csv`;
+an empty or unmatched result still contains the header. `GET /health` returns
+`{"status":"ok"}`.
 
 Run the repository's HTTP end-to-end checks with:
 

@@ -1,5 +1,7 @@
 """Exercise the notes service through its public HTTP boundary."""
 
+import csv
+import io
 import json
 import socket
 import subprocess
@@ -57,6 +59,60 @@ class NotesHTTPTests(unittest.TestCase):
         with response:
             return response.status, response.headers["Content-Type"], json.loads(response.read())
 
+    def request_csv(self, path: str) -> tuple[int, str, bytes, list[list[str]]]:
+        with urlopen(self.base + path, timeout=2) as response:
+            status = response.status
+            content_type = response.headers["Content-Type"]
+            body = response.read()
+        rows = list(csv.reader(io.StringIO(body.decode("utf-8"), newline="")))
+        return status, content_type, body, rows
+
+    def test_csv_export_empty_and_unmatched(self) -> None:
+        status, content_type, body, rows = self.request_csv("/notes?format=csv")
+        self.assertEqual(status, 200)
+        self.assertTrue(content_type.startswith("text/csv"))
+        self.assertEqual(rows, [["id", "title", "tags"]])
+        self.assertEqual(body.decode("utf-8").strip(), "id,title,tags")
+
+        self.request("/notes", {"title": "Existing", "tags": ["work"]})
+        status, content_type, _, rows = self.request_csv("/notes?tag=missing&format=csv")
+        self.assertEqual(status, 200)
+        self.assertTrue(content_type.startswith("text/csv"))
+        self.assertEqual(rows, [["id", "title", "tags"]])
+
+    def test_csv_export_quoting_unicode_filter_and_default_json(self) -> None:
+        notes = []
+        for title, tags in (
+            ('Café, "planning"\n東京', ['WORK', 'tag,"line\nbreak', 'équipe']),
+            ("Other", ["workshop"]),
+            ("After", ["work", "urgent"]),
+            ("Untagged", []),
+        ):
+            status, _, note = self.request("/notes", {"title": title, "tags": tags})
+            self.assertEqual(status, 201)
+            notes.append(note)
+
+        status, content_type, body, rows = self.request_csv("/notes?format=csv")
+        self.assertEqual(status, 200)
+        self.assertTrue(content_type.startswith("text/csv"))
+        self.assertIn("Café".encode("utf-8"), body)
+        self.assertIn("東京".encode("utf-8"), body)
+        expected_rows = [["id", "title", "tags"]] + [
+            [str(note["id"]), note["title"], ";".join(note["tags"])] for note in notes
+        ]
+        self.assertEqual(rows, expected_rows)
+        self.assertIn('"Café, ""planning""\n東京"', body.decode("utf-8"))
+
+        status, content_type, _, rows = self.request_csv("/notes?tag=WORK&format=csv")
+        self.assertEqual(status, 200)
+        self.assertTrue(content_type.startswith("text/csv"))
+        self.assertEqual(rows, [expected_rows[0], expected_rows[1], expected_rows[3]])
+
+        status, content_type, listed = self.request("/notes")
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/json; charset=utf-8")
+        self.assertEqual(listed, notes)
+
     def test_health_reports_ready(self) -> None:
         status, content_type, body = self.request("/health")
         self.assertEqual(status, 200)
@@ -73,6 +129,39 @@ class NotesHTTPTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(content_type.startswith("application/json"))
         self.assertEqual(body, [first[2], second[2]])
+
+    def test_filter_notes_by_exact_case_insensitive_tag(self) -> None:
+        created = []
+        for title, tags in (
+            ("First", ["WORK", "urgent"]),
+            ("Substring", ["workshop"]),
+            ("Other", ["personal"]),
+            ("Second", ["work"]),
+            ("No tags", []),
+            ("Third", ["WoRk"]),
+        ):
+            status, content_type, note = self.request("/notes", {"title": title, "tags": tags})
+            self.assertEqual(status, 201)
+            self.assertTrue(content_type.startswith("application/json"))
+            self.assertEqual(note, {"id": len(created) + 1, "title": title, "tags": tags})
+            created.append(note)
+
+        for path in ("/notes?tag=work", "/notes?tag=WORK"):
+            with self.subTest(path=path):
+                status, content_type, body = self.request(path)
+                self.assertEqual(status, 200)
+                self.assertEqual(content_type, "application/json; charset=utf-8")
+                self.assertEqual(body, [created[0], created[3], created[5]])
+
+        status, content_type, body = self.request("/notes?tag=missing")
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/json; charset=utf-8")
+        self.assertEqual(body, [])
+
+        status, content_type, body = self.request("/notes")
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/json; charset=utf-8")
+        self.assertEqual(body, created)
 
     def test_retrieve_notes_and_failed_lookups_preserve_order(self) -> None:
         created = [

@@ -2,9 +2,9 @@
 
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
-from notes.formatters import render_json
+from notes.formatters import render_csv, render_json
 from notes.store import NoteStore
 
 
@@ -19,12 +19,27 @@ class NotesHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_csv(self, status: int, notes: list[dict]) -> None:
+        body = render_csv(notes)
+        self.send_response(status)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:
-        path = urlsplit(self.path).path
+        url = urlsplit(self.path)
+        path = url.path
         if path == "/health":
             self.send_json(200, {"status": "ok"})
         elif path == "/notes":
-            self.send_json(200, self.store.list_notes())
+            options = parse_qs(url.query, keep_blank_values=True)
+            tags = options.get("tag")
+            notes = self.store.list_notes(tag=tags[0] if tags is not None else None)
+            if options.get("format", [None])[0] == "csv":
+                self.send_csv(200, notes)
+            else:
+                self.send_json(200, notes)
         elif path.startswith("/notes/"):
             note_id = path[len("/notes/"):]
             try:

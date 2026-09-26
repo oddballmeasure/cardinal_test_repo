@@ -25,5 +25,8 @@ class NoteStore:
             note["tags"] = list(tags)
         return note.copy()
 
-    def list_notes(self) -> list[dict]:
-        return [note.copy() for note in self._notes]
+    def list_notes(self, *, tag: str | None = None) -> list[dict]:
+        if tag is None:
+            return [note.copy() for note in self._notes]
+        needle = tag.casefold()
+        return [note.copy() for note in self._notes if any(value.casefold() == needle for value in note["tags"])]
