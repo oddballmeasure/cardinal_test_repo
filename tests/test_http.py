@@ -1,8 +1,12 @@
 """Exercise the API and production frontend through the Compose stack."""
 
+import csv
+from io import StringIO
 import json
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -23,8 +27,21 @@ def request(base: str, path: str, payload: dict | None = None, *, method: str | 
         return response.status, response.headers["Content-Type"], json.loads(response.read())
 
 
+def csv_response(base: str, path: str) -> tuple[int, str, str]:
+    with urlopen(base + path, timeout=3) as response:
+        return response.status, response.headers["Content-Type"], response.read().decode("utf-8")
+
+
 def test_health_reports_redis_backed_service_ready(api_url: str) -> None:
     assert request(api_url, "/health") == (200, "application/json", {"status": "ok"})
+
+
+def test_csv_listing_without_notes_has_only_header(api_url: str) -> None:
+    assert request(api_url, "/notes") == (200, "application/json", [])
+    status, content_type, text = csv_response(api_url, "/notes?format=csv")
+    assert status == 200
+    assert content_type.split(";", 1)[0] == "text/csv"
+    assert text == "id,title,tags\r\n"
 
 
 def test_create_and_list_notes_in_order(api_url: str) -> None:
@@ -34,6 +51,51 @@ def test_create_and_list_notes_in_order(api_url: str) -> None:
     assert first[2] == {"id": 1, "title": "Café", "tags": ["personal"]}
     assert second[2] == {"id": 2, "title": "Plan", "tags": ["work", "urgent"]}
     assert request(api_url, "/notes")[2] == [first[2], second[2]]
+
+
+def test_tag_filter_exact_case_insensitive_and_ordered(api_url: str) -> None:
+    tag = f"Straße-{uuid4().hex}"
+    before = request(api_url, "/notes")[2]
+    first = request(api_url, "/notes", {"title": "First", "tags": [tag.upper(), "other"]})[2]
+    partial = request(api_url, "/notes", {"title": "Partial", "tags": [tag + "-extra"]})[2]
+    last = request(api_url, "/notes", {"title": "Last", "tags": [tag.lower()]})[2]
+    assert request(api_url, f"/notes?tag={quote(tag)}") == (200, "application/json", [first, last])
+    assert request(api_url, "/notes") == (200, "application/json", [*before, first, partial, last])
+
+
+def test_csv_listing_quotes_special_characters_and_preserves_unicode(api_url: str) -> None:
+    note = request(api_url, "/notes", {"title": 'He said "hi",\n東京', "tags": ["café,work", 'quoted"tag', "line\nbreak"]})[2]
+    empty_tags = request(api_url, "/notes", {"title": "No tags", "tags": []})[2]
+    listed = request(api_url, "/notes")
+    assert listed[0:2] == (200, "application/json")
+    assert listed[2][-2:] == [note, empty_tags]
+
+    status, content_type, text = csv_response(api_url, "/notes?format=csv")
+    assert status == 200
+    assert content_type.split(";", 1)[0] == "text/csv"
+    assert text.startswith("id,title,tags\r\n")
+    assert f'{note["id"]},"He said ""hi"",\n東京","café,work;quoted""tag;line\nbreak"\r\n' in text
+    assert text.endswith(f'{empty_tags["id"]},No tags,\r\n')
+    assert list(csv.reader(StringIO(text))) == [
+        ["id", "title", "tags"],
+        *[[str(entry["id"]), entry["title"], ";".join(entry["tags"])] for entry in listed[2]],
+    ]
+
+
+def test_csv_tag_filter_combination_and_no_matches(api_url: str) -> None:
+    tag = f"Csv-{uuid4().hex}"
+    first = request(api_url, "/notes", {"title": "One, 東京", "tags": [tag.upper(), "extra"]})[2]
+    request(api_url, "/notes", {"title": "Not included", "tags": [tag + "suffix"]})
+    last = request(api_url, "/notes", {"title": 'Two "quoted"', "tags": [tag.lower()]})[2]
+    status, content_type, text = csv_response(api_url, f"/notes?tag={tag}&format=csv")
+    assert status == 200
+    assert content_type.split(";", 1)[0] == "text/csv"
+    assert text == (
+        "id,title,tags\r\n"
+        f'{first["id"]},"One, 東京",{tag.upper()};extra\r\n'
+        f'{last["id"]},"Two ""quoted""",{tag.lower()}\r\n'
+    )
+    assert csv_response(api_url, f"/notes?tag={uuid4().hex}&format=csv")[2] == "id,title,tags\r\n"
 
 
 def test_get_note_by_id_returns_created_note(api_url: str) -> None:
