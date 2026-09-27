@@ -23,6 +23,9 @@ curl -X POST http://localhost:<api-port>/notes \
 curl http://localhost:<api-port>/notes
 ```
 
+`GET /stats/tags` summarises stored notes as
+`{"notes": <count>, "tags": <total tags>, "average_tags_per_note": <tags / notes, rounded to 2 places>}`.
+
 `POST /notes` accepts a nonempty `title` and a list of nonempty string `tags`.
 It returns the created note with a numeric ID. `GET /notes` returns notes in
 creation order as JSON. API health depends on Redis being reachable.
@@ -42,3 +45,11 @@ images before running these tests.
 The `deploy/` pair remains a fake-host validation fixture. Its script records
 the configured host, and its health command checks that record and a fake host
 readiness marker; it does not deploy to a production host.
+
+## Error reporting
+
+Unhandled API errors return `500 {"error": "internal error"}`. When
+`CARDINAL_INGEST_URL` and `CARDINAL_INGEST_TOKEN` are set in the environment
+Compose runs in, each one is also sent to Cardinal's ingest endpoint as a
+LogRecord (`api/app/reporting.py`). From a container, the host's Cardinal is
+`http://host.docker.internal:<port>/v1/records`.

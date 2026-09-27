@@ -16,6 +16,11 @@ services:
       dockerfile: api/Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
+      # Unhandled errors are sent to Cardinal when these are set; empty leaves reporting off.
+      CARDINAL_INGEST_URL: ${CARDINAL_INGEST_URL:-}
+      CARDINAL_INGEST_TOKEN: ${CARDINAL_INGEST_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy
