@@ -35,6 +35,33 @@ def test_create_and_list_notes_in_order(api_url: str) -> None:
     assert request(api_url, "/notes")[2] == [first[2], second[2]]
 
 
+def test_get_note_by_id_returns_created_note(api_url: str) -> None:
+    status, _, created = request(api_url, "/notes", {"title": "Read me", "tags": ["personal", "todo"]})
+    assert status == 201
+    assert request(api_url, f"/notes/{created['id']}") == (200, "application/json", created)
+
+
+def test_get_missing_note_ids_return_json_not_found(api_url: str) -> None:
+    status, _, created = request(api_url, "/notes", {"title": "Exists", "tags": []})
+    assert status == 201
+    for missing_id in (str(created["id"] + 1000), "not-a-number"):
+        assert request(api_url, f"/notes/{missing_id}") == (404, "application/json", {"error": "not found"})
+
+
+def test_get_note_by_id_preserves_ordered_notes_list(api_url: str) -> None:
+    created = []
+    for title in ("First", "Middle", "Last"):
+        status, _, note = request(api_url, "/notes", {"title": title, "tags": [title.lower()]})
+        assert status == 201
+        created.append(note)
+    before = request(api_url, "/notes")
+    assert before[0] == 200
+    assert before[2][-3:] == created
+
+    assert request(api_url, f"/notes/{created[1]['id']}")[2] == created[1]
+    assert request(api_url, "/notes") == before
+
+
 def test_invalid_note_does_not_change_list(api_url: str) -> None:
     before = request(api_url, "/notes")[2]
     status, _, body = request(api_url, "/notes", {"title": "", "tags": ["work"]})
