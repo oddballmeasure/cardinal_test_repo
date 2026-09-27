@@ -7,12 +7,13 @@ from urllib.request import Request, urlopen
 from playwright.sync_api import expect, sync_playwright
 
 
-def request(base: str, path: str, payload: dict | None = None) -> tuple[int, str, object]:
-    body = None if payload is None else json.dumps(payload).encode("utf-8")
+def request(base: str, path: str, payload: dict | None = None, *, method: str | None = None) -> tuple[int, str, object]:
+    body = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = Request(
         base + path,
         data=body,
         headers={"Content-Type": "application/json"} if body is not None else {},
+        method=method,
     )
     try:
         response = urlopen(req, timeout=3)
@@ -54,6 +55,65 @@ def test_get_note_by_id_preserves_ordered_list(api_url: str) -> None:
 def test_get_note_by_id_returns_json_404_for_missing_ids(api_url: str) -> None:
     for path in ("/notes/999999", "/notes/not-a-number", "/notes/0", "/notes/-1"):
         assert request(api_url, path) == (404, "application/json", {"error": "not found"})
+
+
+def test_patch_title_updates_only_title_in_get_and_ordered_list(api_url: str) -> None:
+    before = request(api_url, "/notes")[2]
+    first = request(api_url, "/notes", {"title": "First", "tags": ["keep"]})[2]
+    middle = request(api_url, "/notes", {"title": "Old", "tags": ["work", "café"]})[2]
+    last = request(api_url, "/notes", {"title": "Last", "tags": []})[2]
+
+    updated = {**middle, "title": "New title"}
+    assert request(api_url, f"/notes/{middle['id']}", {"title": "New title"}, method="PATCH") == (
+        200, "application/json", updated
+    )
+    assert request(api_url, f"/notes/{middle['id']}") == (200, "application/json", updated)
+    assert request(api_url, "/notes") == (200, "application/json", [*before, first, updated, last])
+
+
+def test_patch_tags_supports_unicode_and_keeps_id_title_and_list_order(api_url: str) -> None:
+    before = request(api_url, "/notes")[2]
+    first = request(api_url, "/notes", {"title": "First", "tags": ["old"]})[2]
+    middle = request(api_url, "/notes", {"title": "Unchanged", "tags": []})[2]
+    last = request(api_url, "/notes", {"title": "Last", "tags": ["keep"]})[2]
+
+    updated = {**middle, "tags": ["工作", "日本語", "café"]}
+    assert request(api_url, f"/notes/{middle['id']}", {"tags": updated["tags"]}, method="PATCH") == (
+        200, "application/json", updated
+    )
+    assert request(api_url, f"/notes/{middle['id']}") == (200, "application/json", updated)
+    assert request(api_url, "/notes") == (200, "application/json", [*before, first, updated, last])
+
+
+def test_invalid_patch_never_changes_note_or_ordered_list(api_url: str) -> None:
+    original = request(api_url, "/notes", {"title": "Keep", "tags": ["safe"]})[2]
+    path = f"/notes/{original['id']}"
+    before = request(api_url, "/notes")
+    for payload in (
+        {"title": ""},
+        {"title": "  \t "},
+        {"title": None},
+        {"title": 42},
+        {"tags": "not a list"},
+        {"tags": None},
+        {"tags": ["valid", ""]},
+        {"tags": ["valid", 7]},
+        {"title": "Would change", "tags": [None]},
+    ):
+        status, content_type, body = request(api_url, path, payload, method="PATCH")
+        assert (status, content_type) == (400, "application/json")
+        assert "error" in body
+        assert request(api_url, path) == (200, "application/json", original)
+        assert request(api_url, "/notes") == before
+
+
+def test_patch_unknown_id_returns_json_404_without_changing_list(api_url: str) -> None:
+    before = request(api_url, "/notes")
+    for path in ("/notes/999999", "/notes/not-a-number", "/notes/0", "/notes/-1"):
+        assert request(api_url, path, {"tags": ["valid"]}, method="PATCH") == (
+            404, "application/json", {"error": "not found"}
+        )
+    assert request(api_url, "/notes") == before
 
 
 def test_invalid_note_does_not_change_list(api_url: str) -> None:
