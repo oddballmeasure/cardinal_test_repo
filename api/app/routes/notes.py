@@ -1,8 +1,8 @@
-"""Create, list, and retrieve notes through the public API."""
+"""Create, list, retrieve, and update notes through the public API."""
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.storage import create_entry, get_entry, list_entries
+from app.storage import create_entry, get_entry, list_entries, update_entry
 
 router = APIRouter()
 
@@ -24,15 +24,50 @@ def get_note(id: str) -> dict:
     return note
 
 
-@router.post("/notes", status_code=201)
-async def post_note(request: Request) -> dict:
+async def note_payload(request: Request) -> object:
     try:
-        payload = await request.json()
+        return await request.json()
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid JSON body") from None
-    if not isinstance(payload, dict) or not isinstance(payload.get("title"), str) or not payload["title"].strip():
+
+
+def validate_title(title: object) -> None:
+    if not isinstance(title, str) or not title.strip():
         raise HTTPException(status_code=400, detail="title must be a nonempty string")
-    tags = payload.get("tags")
+
+
+def validate_tags(tags: object) -> None:
     if not isinstance(tags, list) or any(not isinstance(tag, str) or not tag for tag in tags):
         raise HTTPException(status_code=400, detail="tags must be a list of nonempty strings")
-    return create_entry("notes", {"title": payload["title"], "tags": tags})
+
+
+@router.post("/notes", status_code=201)
+async def post_note(request: Request) -> dict:
+    payload = await note_payload(request)
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="title must be a nonempty string")
+    validate_title(payload.get("title"))
+    validate_tags(payload.get("tags"))
+    return create_entry("notes", {"title": payload["title"], "tags": payload["tags"]})
+
+
+@router.patch("/notes/{id}")
+async def patch_note(id: str, request: Request) -> dict:
+    try:
+        note_id = int(id)
+    except ValueError:
+        raise HTTPException(status_code=404) from None
+    payload = await note_payload(request)
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="invalid request")
+    changes = {}
+    if "title" in payload:
+        validate_title(payload["title"])
+        changes["title"] = payload["title"]
+    if "tags" in payload:
+        validate_tags(payload["tags"])
+        changes["tags"] = payload["tags"]
+    note = update_entry("notes", note_id, changes)
+    if note is None:
+        raise HTTPException(status_code=404)
+    return note
