@@ -202,6 +202,49 @@ def test_browser_rejects_empty_and_whitespace_title_without_creating_note(web_ur
         browser.close()
 
 
+def test_create_and_list_diaries_in_creation_order(api_url: str) -> None:
+    assert request(api_url, "/diaries") == (200, "application/json", [])
+    first = {"date": "2024-02-29", "title": "Leap day", "body": "Café in 東京"}
+    second = {"date": "2025-01-02", "title": "Next", "body": "A new entry"}
+    first_response = request(api_url, "/diaries", first)
+    second_response = request(api_url, "/diaries", second)
+    assert first_response == (201, "application/json", {"id": 1, **first})
+    assert second_response == (201, "application/json", {"id": 2, **second})
+    assert request(api_url, "/diaries") == (
+        200, "application/json", [first_response[2], second_response[2]]
+    )
+
+
+def test_invalid_diaries_do_not_change_list(api_url: str) -> None:
+    before = request(api_url, "/diaries")
+    valid = {"date": "2024-02-29", "title": "Keep", "body": "Original"}
+    invalid = [
+        {"date": date} for date in ("2023-02-29", "2024-04-31", "2024-13-01", "20240101", "nonsense")
+    ]
+    for field in ("date", "title", "body"):
+        invalid.extend(({field: ""}, {field: "   "}, {field: None}, {field: 42}, {field: []}))
+    for changes in invalid:
+        status, content_type, _ = request(api_url, "/diaries", {**valid, **changes})
+        assert (status, content_type) == (400, "application/json")
+        assert request(api_url, "/diaries") == before
+    for field in ("date", "title", "body"):
+        missing = {key: value for key, value in valid.items() if key != field}
+        assert request(api_url, "/diaries", missing)[0] == 400
+        assert request(api_url, "/diaries") == before
+    assert request(api_url, "/diaries", [], method="POST")[0] == 400
+    assert request(api_url, "/diaries") == before
+
+
+def test_diaries_survive_restarting_only_the_api(stack) -> None:
+    before = request(stack.api_url, "/diaries")[2]
+    diary = {"date": "2026-05-18", "title": "Redis persistence", "body": "Still here"}
+    status, _, created = request(stack.api_url, "/diaries", diary)
+    assert status == 201
+    assert created == {"id": len(before) + 1, **diary}
+    stack.restart_api()
+    assert request(stack.api_url, "/diaries") == (200, "application/json", [*before, created])
+
+
 def test_notes_survive_restarting_only_the_api(stack) -> None:
     note = {"title": "Redis persistence", "tags": ["infra"]}
     before = request(stack.api_url, "/notes")[2]
