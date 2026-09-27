@@ -1,8 +1,8 @@
-"""Create and list notes through the public API."""
+"""Create, list, and retrieve notes through the public API."""
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.storage import create_entry, list_entries
+from app.storage import create_entry, get_entry, list_entries
 
 router = APIRouter()
 
@@ -10,6 +10,20 @@ router = APIRouter()
 @router.get("/notes")
 def get_notes() -> list[dict]:
     return list_entries("notes")
+
+
+@router.get("/notes/{note_id}")
+def get_note(note_id: str) -> dict:
+    if not note_id.isascii() or not note_id.isdecimal():
+        raise HTTPException(status_code=404)
+    try:
+        entry_id = int(note_id)
+    except ValueError:
+        raise HTTPException(status_code=404) from None
+    note = get_entry("notes", entry_id)
+    if note is None:
+        raise HTTPException(status_code=404)
+    return note
 
 
 @router.post("/notes", status_code=201)
