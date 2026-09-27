@@ -2,8 +2,8 @@
 
 This repository is a Docker Compose application with a FastAPI API, Redis
 persistent storage, and a production React frontend served by Nginx. Redis is
-the source of truth for notes and future dated diary entries; its append-only
-file is stored in the named `redis_data` volume.
+the source of truth for notes and dated diary entries; its append-only file is
+stored in the named `redis_data` volume.
 
 Start the full stack and inspect the published web and API ports:
 
@@ -22,7 +22,16 @@ curl -X POST http://localhost:<api-port>/notes \
   -d '{"title":"Plan","tags":["work"]}'
 curl http://localhost:<api-port>/notes
 curl http://localhost:<api-port>/notes/1
+curl -X POST http://localhost:<api-port>/diaries \
+  -H 'Content-Type: application/json' \
+  -d '{"date":"2024-02-29","title":"Leap day","body":"A new entry"}'
+curl http://localhost:<api-port>/diaries
 ```
+
+`POST /diaries` requires a real `YYYY-MM-DD` calendar date and nonempty `title`
+and `body` strings. It returns the entry with a numeric ID; `GET /diaries`
+returns entries in creation order. Invalid fields receive HTTP 400 without
+creating an entry. Diary entries survive restarting the API container.
 
 `POST /notes` accepts a nonempty `title` and a list of nonempty string `tags`.
 It returns the created note with a numeric ID. `GET /notes` returns notes in
