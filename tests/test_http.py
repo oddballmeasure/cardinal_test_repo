@@ -211,8 +211,9 @@ def test_browser_creates_note_with_unicode_tags_without_reloading(web_url: str) 
         page.on("load", lambda _: loads.append(True))
         page.goto(web_url)
 
-        title = page.get_by_role("textbox", name="Title")
-        tags = page.get_by_role("textbox", name="Tags (comma-separated)")
+        notes = page.get_by_role("region", name="Notes")
+        title = notes.get_by_role("textbox", name="Title")
+        tags = notes.get_by_role("textbox", name="Tags (comma-separated)")
         assert title.get_attribute("required") is not None
         assert tags.get_attribute("required") is not None
         title.fill("  Travel ideas  ")
@@ -247,8 +248,9 @@ def test_browser_rejects_empty_and_whitespace_title_without_creating_note(web_ur
         browser = playwright.chromium.launch()
         page = browser.new_page()
         page.goto(web_url)
-        title = page.get_by_role("textbox", name="Title")
-        tags = page.get_by_role("textbox", name="Tags (comma-separated)")
+        notes = page.get_by_role("region", name="Notes")
+        title = notes.get_by_role("textbox", name="Title")
+        tags = notes.get_by_role("textbox", name="Tags (comma-separated)")
         tags.fill("personal")
         before = page.request.get(web_url + "/api/notes").json()
         posts = []
@@ -264,16 +266,105 @@ def test_browser_rejects_empty_and_whitespace_title_without_creating_note(web_ur
         browser.close()
 
 
+def test_browser_diary_requires_date_title_and_body(web_url: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(web_url)
+        diaries = page.get_by_role("region", name="Diaries")
+        date = diaries.get_by_label("Date")
+        title = diaries.get_by_label("Title")
+        body = diaries.get_by_label("Body")
+        button = diaries.get_by_role("button", name="Create diary")
+        for field in (date, title, body):
+            assert field.get_attribute("required") is not None
+
+        before = page.request.get(web_url + "/api/diaries").json()
+        posts = []
+        page.on("request", lambda req: posts.append(req) if req.url == web_url + "/api/diaries" and req.method == "POST" else None)
+        for missing in (date, title, body):
+            date.fill("2024-02-29")
+            title.fill("Leap day")
+            body.fill("Café in 東京")
+            missing.fill("")
+            button.click()
+            assert missing.evaluate("element => element.validity.valueMissing")
+        assert posts == []
+        assert page.request.get(web_url + "/api/diaries").json() == before
+        browser.close()
+
+
+def test_browser_creates_diary_and_renders_api_response_without_reloading(web_url: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        loads = []
+        page.on("load", lambda _: loads.append(True))
+        page.goto(web_url)
+        diaries = page.get_by_role("region", name="Diaries")
+        diaries.get_by_label("Date").fill("2024-02-29")
+        diaries.get_by_label("Title").fill("Leap day")
+        diaries.get_by_label("Body").fill("Café in 東京")
+        with page.expect_response(
+            lambda response: response.url == web_url + "/api/diaries" and response.request.method == "POST"
+        ) as created_response:
+            diaries.get_by_role("button", name="Create diary").click()
+
+        response = created_response.value
+        assert response.status == 201
+        assert response.request.post_data_json == {
+            "date": "2024-02-29", "title": "Leap day", "body": "Café in 東京"
+        }
+        created = response.json()
+        assert created == {"id": created["id"], **response.request.post_data_json}
+        entry = diaries.get_by_role("list", name="Diaries list").locator(":scope > li").filter(
+            has=page.get_by_text("Leap day", exact=True)
+        )
+        expect(entry).to_have_count(1)
+        expect(entry.locator("time")).to_have_text(created["date"])
+        expect(entry.locator("strong")).to_have_text(created["title"])
+        expect(entry.locator("p")).to_have_text(created["body"])
+        assert loads == [True]
+        browser.close()
+
+
+def test_browser_reload_lists_diaries_stored_by_api(web_url: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(web_url)
+        payload = {"date": "2025-03-14", "title": f"Stored {uuid4().hex}", "body": "Still here after reload"}
+        response = page.request.post(web_url + "/api/diaries", data=payload)
+        assert response.status == 201
+        stored = response.json()
+        with page.expect_response(
+            lambda response: response.url == web_url + "/api/diaries" and response.request.method == "GET"
+        ) as listed_response:
+            page.reload()
+        assert listed_response.value.status == 200
+        assert stored in listed_response.value.json()
+        diaries = page.get_by_role("region", name="Diaries")
+        entry = diaries.get_by_role("list", name="Diaries list").locator(":scope > li").filter(
+            has=page.get_by_text(stored["title"], exact=True)
+        )
+        expect(entry).to_have_count(1)
+        expect(entry.locator("time")).to_have_text(stored["date"])
+        expect(entry.locator("strong")).to_have_text(stored["title"])
+        expect(entry.locator("p")).to_have_text(stored["body"])
+        browser.close()
+
+
 def test_create_and_list_diaries_in_creation_order(api_url: str) -> None:
-    assert request(api_url, "/diaries") == (200, "application/json", [])
+    before = request(api_url, "/diaries")
+    assert before[0:2] == (200, "application/json")
     first = {"date": "2024-02-29", "title": "Leap day", "body": "Café in 東京"}
     second = {"date": "2025-01-02", "title": "Next", "body": "A new entry"}
     first_response = request(api_url, "/diaries", first)
     second_response = request(api_url, "/diaries", second)
-    assert first_response == (201, "application/json", {"id": 1, **first})
-    assert second_response == (201, "application/json", {"id": 2, **second})
+    assert first_response == (201, "application/json", {"id": len(before[2]) + 1, **first})
+    assert second_response == (201, "application/json", {"id": len(before[2]) + 2, **second})
     assert request(api_url, "/diaries") == (
-        200, "application/json", [first_response[2], second_response[2]]
+        200, "application/json", [*before[2], first_response[2], second_response[2]]
     )
 
 
