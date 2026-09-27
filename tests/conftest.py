@@ -65,6 +65,16 @@ def stack() -> ComposeStack:
         current.close()
 
 
+@pytest.fixture
+def fresh_stack() -> ComposeStack:
+    """A separate Compose project with its own empty Redis volume for one test."""
+    current = ComposeStack(Path(__file__).resolve().parents[1])
+    try:
+        yield current
+    finally:
+        current.close()
+
+
 @pytest.fixture(scope="session")
 def api_url(stack: ComposeStack) -> str:
     return stack.api_url

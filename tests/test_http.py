@@ -68,6 +68,13 @@ def test_notes_survive_restarting_only_the_api(stack) -> None:
     assert request(stack.api_url, "/notes")[2] == [*before, created]
 
 
+def test_tag_stats_with_no_notes(fresh_stack) -> None:
+    assert request(fresh_stack.api_url, "/notes") == (200, "application/json", [])
+    assert request(fresh_stack.api_url, "/stats/tags") == (
+        200, "application/json", {"notes": 0, "tags": 0, "average_tags_per_note": 0}
+    )
+
+
 def test_tag_stats_summarise_stored_notes(stack) -> None:
     assert request(stack.api_url, "/notes", {"title": "Stats", "tags": ["a", "b"]})[0] == 201
     notes = request(stack.api_url, "/notes")[2]
