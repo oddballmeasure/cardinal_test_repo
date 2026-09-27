@@ -20,3 +20,14 @@ def create_entry(collection: str, values: dict) -> dict:
 
 def list_entries(collection: str) -> list[dict]:
     return [json.loads(value) for value in redis_client.lrange(collection, 0, -1)]
+
+
+def get_entry(collection: str, entry_id: int) -> dict | None:
+    # Entries are appended in ID order, so reading their list index does not
+    # disturb the ordered collection.
+    if entry_id < 1 or entry_id > redis_client.llen(collection):
+        return None
+    value = redis_client.lindex(collection, entry_id - 1)
+    entry = json.loads(value) if value is not None else None
+    return entry if entry is not None and entry["id"] == entry_id else None
+
