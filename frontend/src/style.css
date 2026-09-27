@@ -5,3 +5,25 @@ body {
   max-width: 48rem;
   padding: 2rem;
 }
+
+form {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 28rem;
+}
+
+form input {
+  font: inherit;
+  padding: 0.4rem;
+}
+
+form button {
+  font: inherit;
+  justify-self: start;
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.8rem;
+}
+
+li {
+  margin-block: 0.5rem;
+}
