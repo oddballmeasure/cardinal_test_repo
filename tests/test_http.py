@@ -80,6 +80,63 @@ def test_frontend_is_production_built_and_api_proxy_works(web_url: str) -> None:
         browser.close()
 
 
+def test_browser_creates_note_with_unicode_tags_and_renders_without_reload(web_url: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(web_url)
+        title = page.get_by_role("textbox", name="Title")
+        tags = page.get_by_role("textbox", name="Tags (comma-separated)")
+        assert title.get_attribute("required") is not None
+        assert tags.is_visible()
+        page.evaluate("window.notePageMarker = 'still here'")
+
+        title.fill("Café meeting")
+        tags.fill("  工作 , , café  ,  日本語 ,   ")
+        with page.expect_response(
+            lambda response: response.url.endswith("/api/notes") and response.request.method == "POST"
+        ) as captured:
+            page.get_by_role("button", name="Create note").click()
+        response = captured.value
+        assert response.status == 201
+        assert response.request.post_data_json == {
+            "title": "Café meeting",
+            "tags": ["工作", "café", "日本語"],
+        }
+        created = response.json()
+        assert created["id"] > 0
+        assert created["title"] == "Café meeting"
+        assert created["tags"] == ["工作", "café", "日本語"]
+        note = page.locator("section[aria-labelledby='notes-heading'] li").filter(has_text="Café meeting")
+        expect(note).to_have_text("Café meeting — 工作, café, 日本語")
+        assert page.evaluate("window.notePageMarker") == "still here"
+        browser.close()
+
+
+def test_browser_rejects_empty_and_whitespace_titles_without_post(web_url: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(web_url)
+        posted = []
+        page.on(
+            "request",
+            lambda req: posted.append(req) if req.url.endswith("/api/notes") and req.method == "POST" else None,
+        )
+        title = page.get_by_role("textbox", name="Title")
+        page.get_by_role("textbox", name="Tags (comma-separated)").fill("one, two")
+        page.get_by_role("button", name="Create note").click()
+        assert not title.evaluate("element => element.validity.valid")
+        assert posted == []
+
+        title.fill("   \t  ")
+        page.get_by_role("button", name="Create note").click()
+        expect(page.get_by_role("alert")).to_have_text("Title is required")
+        assert posted == []
+        assert page.evaluate("window.location.pathname") == "/"
+        browser.close()
+
+
 def test_notes_survive_restarting_only_the_api(stack) -> None:
     note = {"title": "Redis persistence", "tags": ["infra"]}
     before = request(stack.api_url, "/notes")[2]
