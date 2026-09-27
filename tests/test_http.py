@@ -1,7 +1,10 @@
 """Exercise the API and production frontend through the Compose stack."""
 
+import csv
+from io import StringIO
 import json
 from urllib.error import HTTPError
+from uuid import uuid4
 from urllib.request import Request, urlopen
 
 from playwright.sync_api import expect, sync_playwright
@@ -34,6 +37,69 @@ def test_create_and_list_notes_in_order(api_url: str) -> None:
     assert first[2] == {"id": 1, "title": "Café", "tags": ["personal"]}
     assert second[2] == {"id": 2, "title": "Plan", "tags": ["work", "urgent"]}
     assert request(api_url, "/notes")[2] == [first[2], second[2]]
+
+
+def csv_notes(base: str, path: str) -> tuple[int, str, str]:
+    with urlopen(base + path, timeout=3) as response:
+        raw = response.read()
+        assert raw.decode("utf-8").encode("utf-8") == raw
+        return response.status, response.headers["Content-Type"], raw.decode("utf-8")
+
+
+def test_tag_filter_is_exact_case_insensitive_and_keeps_creation_order(api_url: str) -> None:
+    before = request(api_url, "/notes")
+    marker = f"Filter-{uuid4().hex}"
+    first = request(api_url, "/notes", {"title": "First match", "tags": [marker.upper()]})
+    different = request(api_url, "/notes", {"title": "Substring", "tags": [marker + "-extra"]})
+    second = request(api_url, "/notes", {"title": "Second match", "tags": ["other", marker.lower()]})
+    unrelated = request(api_url, "/notes", {"title": "No tags", "tags": []})
+    assert all(note[0:2] == (201, "application/json") for note in (first, different, second, unrelated))
+    assert request(api_url, f"/notes?tag={marker}") == (200, "application/json", [first[2], second[2]])
+    assert request(api_url, f"/notes?tag={marker.upper()}") == (200, "application/json", [first[2], second[2]])
+    assert request(api_url, "/notes") == (
+        200, "application/json", [*before[2], first[2], different[2], second[2], unrelated[2]]
+    )
+
+
+def test_csv_export_quotes_fields_and_preserves_unicode(api_url: str) -> None:
+    title = 'Café, "日本語"\nnext line'
+    tags = ['working, late', 'quote "hello"', '工作']
+    status, content_type, created = request(api_url, "/notes", {"title": title, "tags": tags})
+    assert (status, content_type) == (201, "application/json")
+    status, content_type, text = csv_notes(api_url, "/notes?format=csv")
+    assert status == 200
+    assert content_type.startswith("text/csv")
+    assert text.startswith("id,title,tags\r\n")
+    assert '"Café, ""日本語""\nnext line"' in text
+    assert '"working, late;quote ""hello"";工作"' in text
+    rows = list(csv.reader(StringIO(text, newline="")))
+    assert rows[0] == ["id", "title", "tags"]
+    assert rows[1:] == [
+        [str(note["id"]), note["title"], ";".join(note["tags"])]
+        for note in request(api_url, "/notes")[2]
+    ]
+    assert rows[-1] == [str(created["id"]), title, ";".join(tags)]
+
+
+def test_csv_export_with_tag_filters_in_order_and_has_header_when_empty(api_url: str) -> None:
+    marker = f"Csv-{uuid4().hex}"
+    first = request(api_url, "/notes", {"title": "first", "tags": [marker.upper(), "café"]})[2]
+    request(api_url, "/notes", {"title": "not exact", "tags": [marker + "extra"]})
+    second = request(api_url, "/notes", {"title": "second", "tags": [marker.lower()]})[2]
+
+    status, content_type, text = csv_notes(api_url, f"/notes?tag={marker}&format=csv")
+    assert status == 200
+    assert content_type.startswith("text/csv")
+    assert list(csv.reader(StringIO(text, newline=""))) == [
+        ["id", "title", "tags"],
+        [str(first["id"]), "first", ";".join(first["tags"])],
+        [str(second["id"]), "second", marker.lower()],
+    ]
+    status, content_type, text = csv_notes(api_url, f"/notes?tag=missing-{uuid4().hex}&format=csv")
+    assert status == 200
+    assert content_type.startswith("text/csv")
+    assert text == "id,title,tags\r\n"
+    assert request(api_url, f"/notes?tag=missing-{uuid4().hex}") == (200, "application/json", [])
 
 
 def test_create_and_list_diaries_in_creation_order_without_changing_notes(api_url: str) -> None:
