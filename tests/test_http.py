@@ -7,12 +7,13 @@ from urllib.request import Request, urlopen
 from playwright.sync_api import expect, sync_playwright
 
 
-def request(base: str, path: str, payload: dict | None = None) -> tuple[int, str, object]:
+def request(base: str, path: str, payload: dict | None = None, *, method: str | None = None) -> tuple[int, str, object]:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     req = Request(
         base + path,
         data=body,
         headers={"Content-Type": "application/json"} if body is not None else {},
+        method=method,
     )
     try:
         response = urlopen(req, timeout=3)
@@ -60,6 +61,60 @@ def test_get_note_by_id_preserves_ordered_notes_list(api_url: str) -> None:
 
     assert request(api_url, f"/notes/{created[1]['id']}")[2] == created[1]
     assert request(api_url, "/notes") == before
+
+
+def test_patch_title_preserves_tags_and_order(api_url: str) -> None:
+    first = request(api_url, "/notes", {"title": "First", "tags": ["café"]})[2]
+    second = request(api_url, "/notes", {"title": "Second", "tags": ["work"]})[2]
+    before = request(api_url, "/notes")[2]
+
+    updated = {**first, "title": "New title"}
+    assert request(api_url, f"/notes/{first['id']}", {"title": "New title"}, method="PATCH") == (
+        200, "application/json", updated
+    )
+    assert request(api_url, f"/notes/{first['id']}")[2] == updated
+    assert request(api_url, "/notes")[2] == [*before[:-2], updated, second]
+
+
+def test_patch_tags_preserves_title_id_and_order_with_unicode(api_url: str) -> None:
+    first = request(api_url, "/notes", {"title": "Before", "tags": ["old"]})[2]
+    second = request(api_url, "/notes", {"title": "After", "tags": ["other"]})[2]
+    before = request(api_url, "/notes")[2]
+
+    updated = {**first, "tags": ["東京", "café", "سفر"]}
+    assert request(api_url, f"/notes/{first['id']}", {"tags": updated["tags"]}, method="PATCH") == (
+        200, "application/json", updated
+    )
+    assert request(api_url, f"/notes/{first['id']}")[2] == updated
+    assert request(api_url, "/notes")[2] == [*before[:-2], updated, second]
+
+
+def test_patch_invalid_fields_does_not_change_note_or_list(api_url: str) -> None:
+    note = request(api_url, "/notes", {"title": "Keep", "tags": ["work"]})[2]
+    before = request(api_url, "/notes")[2]
+    for payload, error in (
+        ({"title": ""}, "title must be a nonempty string"),
+        ({"title": "   "}, "title must be a nonempty string"),
+        ({"title": None}, "title must be a nonempty string"),
+        ({"tags": "not a list"}, "tags must be a list of nonempty strings"),
+        ({"tags": ["ok", ""]}, "tags must be a list of nonempty strings"),
+        ({"tags": [42]}, "tags must be a list of nonempty strings"),
+        ({"title": "Should not persist", "tags": [None]}, "tags must be a list of nonempty strings"),
+    ):
+        assert request(api_url, f"/notes/{note['id']}", payload, method="PATCH") == (
+            400, "application/json", {"error": error}
+        )
+        assert request(api_url, f"/notes/{note['id']}")[2] == note
+        assert request(api_url, "/notes")[2] == before
+
+
+def test_patch_missing_id_returns_json_not_found(api_url: str) -> None:
+    before = request(api_url, "/notes")[2]
+    for missing_id in ("999999", "not-a-number"):
+        assert request(api_url, f"/notes/{missing_id}", {"title": "Missing"}, method="PATCH") == (
+            404, "application/json", {"error": "not found"}
+        )
+    assert request(api_url, "/notes")[2] == before
 
 
 def test_invalid_note_does_not_change_list(api_url: str) -> None:

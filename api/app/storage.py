@@ -3,7 +3,7 @@
 import json
 import os
 
-from redis import Redis
+from redis import Redis, WatchError
 
 redis_client = Redis.from_url(
     os.getenv("REDIS_URL", "redis://redis:6379/0"),
@@ -30,4 +30,26 @@ def get_entry(collection: str, entry_id: int) -> dict | None:
         return None
     entry = json.loads(value)
     return entry if entry.get("id") == entry_id else None
+
+
+def update_entry(collection: str, entry_id: int, changes: dict) -> dict | None:
+    if entry_id < 1:
+        return None
+    with redis_client.pipeline() as pipe:
+        while True:
+            try:
+                pipe.watch(collection)
+                value = pipe.lindex(collection, entry_id - 1)
+                if value is None:
+                    return None
+                entry = json.loads(value)
+                if entry.get("id") != entry_id:
+                    return None
+                entry.update(changes)
+                pipe.multi()
+                pipe.lset(collection, entry_id - 1, json.dumps(entry, ensure_ascii=False))
+                pipe.execute()
+                return entry
+            except WatchError:
+                continue
 
