@@ -21,11 +21,13 @@ curl -X POST http://localhost:<api-port>/notes \
   -H 'Content-Type: application/json' \
   -d '{"title":"Plan","tags":["work"]}'
 curl http://localhost:<api-port>/notes
+curl http://localhost:<api-port>/notes/1
 ```
 
 `POST /notes` accepts a nonempty `title` and a list of nonempty string `tags`.
 It returns the created note with a numeric ID. `GET /notes` returns notes in
-creation order as JSON. API health depends on Redis being reachable.
+creation order as JSON. `GET /notes/{id}` returns the saved note, or a JSON 404
+error for an unknown or nonnumeric ID. API health depends on Redis being reachable.
 
 Run the repository's container and browser E2E checks with:
 
