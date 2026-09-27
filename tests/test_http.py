@@ -86,6 +86,67 @@ def test_frontend_is_production_built_and_api_proxy_works(web_url: str) -> None:
         browser.close()
 
 
+def test_browser_creates_note_with_unicode_tags_without_reloading(web_url: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        loads = []
+        page.on("load", lambda _: loads.append(True))
+        page.goto(web_url)
+
+        title = page.get_by_role("textbox", name="Title")
+        tags = page.get_by_role("textbox", name="Tags (comma-separated)")
+        assert title.get_attribute("required") is not None
+        assert tags.get_attribute("required") is not None
+        title.fill("  Travel ideas  ")
+        tags.fill("  café , 東京 ,  سفر  , , ")
+        with page.expect_response(
+            lambda response: response.url == web_url + "/api/notes" and response.request.method == "POST"
+        ) as created_response:
+            page.get_by_role("button", name="Create note").click()
+
+        response = created_response.value
+        assert response.status == 201
+        assert response.request.post_data_json == {
+            "title": "Travel ideas", "tags": ["café", "東京", "سفر"]
+        }
+        created = response.json()
+        assert created["id"] > 0
+        assert created["title"] == "Travel ideas"
+        assert created["tags"] == ["café", "東京", "سفر"]
+        note = page.get_by_role("list", name="Notes list").locator(":scope > li").filter(
+            has=page.get_by_text(created["title"], exact=True)
+        )
+        expect(note).to_have_count(1)
+        expect(note.get_by_role("list", name="Tags for Travel ideas").get_by_role("listitem")).to_have_text(
+            created["tags"]
+        )
+        assert loads == [True]
+        browser.close()
+
+
+def test_browser_rejects_empty_and_whitespace_title_without_creating_note(web_url: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(web_url)
+        title = page.get_by_role("textbox", name="Title")
+        tags = page.get_by_role("textbox", name="Tags (comma-separated)")
+        tags.fill("personal")
+        before = page.request.get(web_url + "/api/notes").json()
+        posts = []
+        page.on("request", lambda req: posts.append(req) if req.method == "POST" else None)
+
+        page.get_by_role("button", name="Create note").click()
+        assert title.evaluate("element => element.validity.valueMissing")
+        title.fill("   ")
+        page.get_by_role("button", name="Create note").click()
+        expect(page.get_by_role("alert")).to_have_text("Title is required.")
+        assert posts == []
+        assert page.request.get(web_url + "/api/notes").json() == before
+        browser.close()
+
+
 def test_notes_survive_restarting_only_the_api(stack) -> None:
     note = {"title": "Redis persistence", "tags": ["infra"]}
     before = request(stack.api_url, "/notes")[2]
