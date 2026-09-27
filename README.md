@@ -1,34 +1,44 @@
-# Notes test service
+# Cardinal notes test application
 
-This is a small, dependency-free Python 3.13 HTTP service for Cardinal's live
-repository test scenario. Notes are kept in memory and reset when the process
-restarts.
+This repository is a Docker Compose application with a FastAPI API, Redis
+persistent storage, and a production React frontend served by Nginx. Redis is
+the source of truth for notes and future dated diary entries; its append-only
+file is stored in the named `redis_data` volume.
+
+Start the full stack and inspect the published web and API ports:
 
 ```sh
-python -m notes --host 127.0.0.1 --port 8000
+docker compose up --build --wait
+docker compose port web 80
+docker compose port api 8000
 ```
 
-In another terminal:
+The web container proxies `/api/*` to the API. Existing endpoints are:
 
 ```sh
-curl http://127.0.0.1:8000/health
-curl -X POST http://127.0.0.1:8000/notes \
+curl http://localhost:<api-port>/health
+curl -X POST http://localhost:<api-port>/notes \
   -H 'Content-Type: application/json' \
   -d '{"title":"Plan","tags":["work"]}'
-curl http://127.0.0.1:8000/notes
+curl http://localhost:<api-port>/notes
 ```
 
 `POST /notes` accepts a nonempty `title` and a list of nonempty string `tags`.
-It returns the new note with a numeric ID. `GET /notes` returns notes in creation
-order as JSON, and `GET /health` returns `{"status":"ok"}`.
+It returns the created note with a numeric ID. `GET /notes` returns notes in
+creation order as JSON. API health depends on Redis being reachable.
 
-Run the repository's HTTP end-to-end checks with:
+Run the repository's container and browser E2E checks with:
 
 ```sh
-python -m unittest discover -s tests -v
+python -m pip install 'playwright>=1.50,<2' 'pytest>=8,<10'
+python -m playwright install chromium
+python -m pytest -q tests
 ```
 
-The `deploy/` pair is a fake-host validation fixture. Its script records the
-configured host, and its health command succeeds only after that record and the
-fake host's readiness marker are present. It does not install or start the
-service on a production host.
+The tests build and start a unique Compose project, then remove its containers
+and Redis volume. CI keeps the required check name `http-e2e` and builds all
+images before running these tests.
+
+The `deploy/` pair remains a fake-host validation fixture. Its script records
+the configured host, and its health command checks that record and a fake host
+readiness marker; it does not deploy to a production host.

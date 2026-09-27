@@ -1,5 +1,11 @@
 [project]
 name = "cardinal-notes-test-service"
-version = "0.1.0"
-description = "Small HTTP service used as a Cardinal test repository"
+version = "0.2.0"
+description = "Docker-based notes and diary application used as a Cardinal test repository"
 requires-python = ">=3.13"
+
+[dependency-groups]
+test = ["playwright>=1.50,<2", "pytest>=8,<10"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
