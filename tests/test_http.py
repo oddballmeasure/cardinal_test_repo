@@ -36,6 +36,46 @@ def test_create_and_list_notes_in_order(api_url: str) -> None:
     assert request(api_url, "/notes")[2] == [first[2], second[2]]
 
 
+def test_create_and_list_diaries_in_creation_order_without_changing_notes(api_url: str) -> None:
+    before = request(api_url, "/diaries")
+    notes_before = request(api_url, "/notes")
+    assert before[0:2] == (200, "application/json")
+    assert isinstance(before[2], list)
+
+    first = request(api_url, "/diaries", {"date": "2024-02-29", "title": "Leap day", "body": "Café"})
+    second = request(api_url, "/diaries", {"date": "2023-01-01", "title": "Earlier date", "body": "Later entry"})
+    assert first == (201, "application/json", {
+        "id": len(before[2]) + 1, "date": "2024-02-29", "title": "Leap day", "body": "Café"
+    })
+    assert second == (201, "application/json", {
+        "id": first[2]["id"] + 1, "date": "2023-01-01", "title": "Earlier date", "body": "Later entry"
+    })
+    assert request(api_url, "/diaries") == (200, "application/json", [*before[2], first[2], second[2]])
+    assert request(api_url, "/notes") == notes_before
+
+
+def test_invalid_diaries_never_change_list(api_url: str) -> None:
+    before = request(api_url, "/diaries")
+    valid = {"date": "2024-03-01", "title": "Keep", "body": "Safe"}
+    for field in ("date", "title", "body"):
+        for value in (None, "", "  \t ", 42):
+            payload = {**valid, field: value}
+            status, content_type, response = request(api_url, "/diaries", payload)
+            assert (status, content_type) == (400, "application/json")
+            assert field in response["error"]
+            assert request(api_url, "/diaries") == before
+        status, content_type, response = request(api_url, "/diaries", {k: v for k, v in valid.items() if k != field})
+        assert (status, content_type) == (400, "application/json")
+        assert field in response["error"]
+        assert request(api_url, "/diaries") == before
+
+    for invalid_date in ("2023-02-29", "2024-04-31", "2024-13-01", "2024-01-00", "20240301", "2024-W09-5"):
+        status, content_type, response = request(api_url, "/diaries", {**valid, "date": invalid_date})
+        assert (status, content_type) == (400, "application/json")
+        assert "date" in response["error"]
+        assert request(api_url, "/diaries") == before
+
+
 def test_get_note_by_id_preserves_ordered_list(api_url: str) -> None:
     existing = request(api_url, "/notes")[2]
     created = [
@@ -195,6 +235,17 @@ def test_browser_rejects_empty_and_whitespace_titles_without_post(web_url: str) 
         assert posted == []
         assert page.evaluate("window.location.pathname") == "/"
         browser.close()
+
+
+def test_diaries_survive_restarting_only_the_api(stack) -> None:
+    before = request(stack.api_url, "/diaries")
+    assert before[0:2] == (200, "application/json")
+    status, content_type, created = request(
+        stack.api_url, "/diaries", {"date": "2025-12-31", "title": "Redis persistence", "body": "Still here"}
+    )
+    assert (status, content_type) == (201, "application/json")
+    stack.restart_api()
+    assert request(stack.api_url, "/diaries") == (200, "application/json", [*before[2], created])
 
 
 def test_notes_survive_restarting_only_the_api(stack) -> None:
