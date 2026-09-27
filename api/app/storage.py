@@ -20,3 +20,7 @@ def create_entry(collection: str, values: dict) -> dict:
 
 def list_entries(collection: str) -> list[dict]:
     return [json.loads(value) for value in redis_client.lrange(collection, 0, -1)]
+
+
+def get_entry(collection: str, entry_id: int) -> dict | None:
+    return next((entry for entry in list_entries(collection) if entry["id"] == entry_id), None)
