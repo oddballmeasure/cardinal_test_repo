@@ -35,6 +35,28 @@ def test_create_and_list_notes_in_order(api_url: str) -> None:
     assert request(api_url, "/notes")[2] == [first[2], second[2]]
 
 
+def test_get_note_by_id_returns_created_json(api_url: str) -> None:
+    status, content_type, created = request(api_url, "/notes", {"title": "Retrieve me", "tags": ["lookup"]})
+    assert (status, content_type) == (201, "application/json")
+    assert request(api_url, f"/notes/{created['id']}") == (200, "application/json", created)
+
+
+def test_get_note_by_unknown_or_nonnumeric_id_returns_json_404(api_url: str) -> None:
+    notes = request(api_url, "/notes")[2]
+    unknown_id = max((note["id"] for note in notes), default=0) + 1000
+    for path in (f"/notes/{unknown_id}", "/notes/not-a-number"):
+        assert request(api_url, path) == (404, "application/json", {"error": "not found"})
+
+
+def test_get_note_by_id_preserves_list_order(api_url: str) -> None:
+    created = [request(api_url, "/notes", {"title": title, "tags": []})[2]
+               for title in ("First lookup", "Middle lookup", "Last lookup")]
+    before = request(api_url, "/notes")
+    assert before[2][-3:] == created
+    assert request(api_url, f"/notes/{created[1]['id']}")[2] == created[1]
+    assert request(api_url, "/notes") == before
+
+
 def test_invalid_note_does_not_change_list(api_url: str) -> None:
     before = request(api_url, "/notes")[2]
     status, _, body = request(api_url, "/notes", {"title": "", "tags": ["work"]})
