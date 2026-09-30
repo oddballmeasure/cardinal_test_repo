@@ -117,6 +117,52 @@ def test_invalid_note_does_not_change_list(api_url: str) -> None:
     assert request(api_url, "/notes")[2] == before
 
 
+def test_create_and_list_diaries_in_creation_order(api_url: str) -> None:
+    before = request(api_url, "/diaries")
+    assert before[0:2] == (200, "application/json")
+    assert isinstance(before[2], list)
+    entries = [
+        {"date": "2024-02-29", "title": "Leap day", "body": "Café in town"},
+        {"date": "2023-01-01", "title": "Earlier date", "body": "Still created second"},
+    ]
+    created = []
+    for entry in entries:
+        status, content_type, result = request(api_url, "/diaries", entry)
+        assert (status, content_type) == (201, "application/json")
+        assert isinstance(result["id"], int)
+        assert result["id"] > 0
+        assert result == {"id": result["id"], **entry}
+        created.append(result)
+    assert created[0]["id"] < created[1]["id"]
+    assert request(api_url, "/diaries") == (200, "application/json", [*before[2], *created])
+
+
+def test_invalid_diaries_do_not_change_list(api_url: str) -> None:
+    before = request(api_url, "/diaries")[2]
+    valid = {"date": "2024-02-29", "title": "A title", "body": "An entry"}
+    for changes, field in (
+        ({"date": "2023-02-29"}, "date"),
+        ({"date": "2024-13-01"}, "date"),
+        ({"date": "20240229"}, "date"),
+        ({"date": ""}, "date"),
+        ({"date": " \t "}, "date"),
+        ({"title": ""}, "title"),
+        ({"title": " \t "}, "title"),
+        ({"body": ""}, "body"),
+        ({"body": " \t "}, "body"),
+    ):
+        status, content_type, result = request(api_url, "/diaries", {**valid, **changes})
+        assert (status, content_type) == (400, "application/json")
+        assert field in result["error"]
+        assert request(api_url, "/diaries")[2] == before
+    for field in ("date", "title", "body"):
+        payload = {key: value for key, value in valid.items() if key != field}
+        status, content_type, result = request(api_url, "/diaries", payload)
+        assert (status, content_type) == (400, "application/json")
+        assert field in result["error"]
+        assert request(api_url, "/diaries")[2] == before
+
+
 def test_unknown_route_returns_not_found(api_url: str) -> None:
     assert request(api_url, "/missing")[2] == {"error": "not found"}
 
@@ -199,3 +245,19 @@ def test_tag_stats_summarise_stored_notes(stack) -> None:
     total = sum(len(note["tags"]) for note in notes)
     assert request(stack.api_url, "/stats/tags") == (200, "application/json", {
         "notes": len(notes), "tags": total, "average_tags_per_note": round(total / len(notes), 2)})
+
+
+def test_diaries_survive_restarting_only_the_api(stack) -> None:
+    before = request(stack.api_url, "/diaries")[2]
+    entries = [
+        {"date": "2025-01-02", "title": "First", "body": "Redis persistence"},
+        {"date": "2024-01-02", "title": "Second", "body": "Creation order"},
+    ]
+    created = []
+    for entry in entries:
+        status, _, result = request(stack.api_url, "/diaries", entry)
+        assert status == 201
+        created.append(result)
+    assert request(stack.api_url, "/diaries")[2] == [*before, *created]
+    stack.restart_api()
+    assert request(stack.api_url, "/diaries") == (200, "application/json", [*before, *created])
