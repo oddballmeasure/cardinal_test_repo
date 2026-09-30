@@ -13,12 +13,18 @@ class ComposeStack:
         self.project = f"notes-repo-test-{uuid4().hex[:12]}"
         self.compose = ["docker", "compose", "-p", self.project, "-f", str(repo / "compose.yaml")]
         try:
-            subprocess.run(
+            result = subprocess.run(
                 [*self.compose, "up", "--build", "--detach", "--wait", "--wait-timeout", "240"],
                 cwd=repo,
-                check=True,
+                capture_output=True,
+                text=True,
                 timeout=360,
             )
+            if result.returncode:
+                logs = subprocess.run(
+                    [*self.compose, "logs", "api"], cwd=repo, capture_output=True, text=True, timeout=15,
+                )
+                raise RuntimeError(f"Compose startup failed:\n{result.stderr[-1000:]}\nAPI logs:\n{logs.stdout[-4000:]}{logs.stderr[-1000:]}")
             self.api_url = f"http://127.0.0.1:{self._port('api', 8000)}"
             self.web_url = f"http://127.0.0.1:{self._port('web', 80)}"
         except Exception:
