@@ -1,7 +1,10 @@
 """Exercise the API and production frontend through the Compose stack."""
 
+import csv
 import json
+from io import StringIO
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -24,6 +27,12 @@ def request(base: str, path: str, payload: dict | None = None, *, method: str | 
         return response.status, response.headers["Content-Type"], json.loads(response.read())
 
 
+def request_csv(base: str, path: str) -> tuple[int, str, list[list[str]]]:
+    with urlopen(base + path, timeout=3) as response:
+        text = response.read().decode("utf-8")
+        return response.status, response.headers["Content-Type"], list(csv.reader(StringIO(text, newline="")))
+
+
 def test_health_reports_redis_backed_service_ready(api_url: str) -> None:
     assert request(api_url, "/health") == (200, "application/json", {"status": "ok"})
 
@@ -34,7 +43,60 @@ def test_create_and_list_notes_in_order(api_url: str) -> None:
     assert first[0] == second[0] == 201
     assert first[2] == {"id": 1, "title": "Café", "tags": ["personal"]}
     assert second[2] == {"id": 2, "title": "Plan", "tags": ["work", "urgent"]}
-    assert request(api_url, "/notes")[2] == [first[2], second[2]]
+    assert request(api_url, "/notes") == (200, "application/json", [first[2], second[2]])
+
+
+def test_notes_filter_tags_exactly_ignoring_case_in_creation_order(api_url: str) -> None:
+    marker = f"tag-{uuid4().hex}"
+    first = request(api_url, "/notes", {"title": "First match", "tags": [marker.upper()]})[2]
+    request(api_url, "/notes", {"title": "Only a prefix", "tags": [marker + "-extra"]})
+    second = request(api_url, "/notes", {"title": "Second match", "tags": [marker.lower(), "other"]})[2]
+    assert request(api_url, "/notes?" + urlencode({"tag": marker.swapcase()})) == (
+        200, "application/json", [first, second],
+    )
+    assert request(api_url, "/notes?" + urlencode({"tag": marker[:8]})) == (
+        200, "application/json", [],
+    )
+
+
+def test_notes_csv_exports_all_notes_with_quoted_unicode_fields(api_url: str) -> None:
+    title = 'Café, "quoted"\n東京'
+    tags = ['a,b', 'say "hi"', 'line\nbreak', '🍵']
+    status, content_type, created = request(api_url, "/notes", {"title": title, "tags": tags})
+    assert (status, content_type) == (201, "application/json")
+    assert created == {"id": created["id"], "title": title, "tags": tags}
+    notes = request(api_url, "/notes")
+    assert notes[0:2] == (200, "application/json")
+    assert notes[2][-1] == created
+    csv_status, csv_type, rows = request_csv(api_url, "/notes?format=csv")
+    assert csv_status == 200
+    assert csv_type.startswith("text/csv")
+    assert rows == [["id", "title", "tags"], *[
+        [str(note["id"]), note["title"], ";".join(note["tags"])] for note in notes[2]
+    ]]
+
+
+def test_notes_csv_with_no_matching_tag_has_header_only(api_url: str) -> None:
+    path = "/notes?" + urlencode({"tag": f"missing-{uuid4().hex}", "format": "csv"})
+    status, content_type, rows = request_csv(api_url, path)
+    assert status == 200
+    assert content_type.startswith("text/csv")
+    assert rows == [["id", "title", "tags"]]
+
+
+def test_notes_csv_combines_tag_filter_and_creation_order(api_url: str) -> None:
+    marker = f"csv-{uuid4().hex}"
+    first = request(api_url, "/notes", {"title": "First, 🍵", "tags": [marker.upper(), "x;y"]})[2]
+    request(api_url, "/notes", {"title": "Not matching", "tags": [marker + "-extra"]})
+    second = request(api_url, "/notes", {"title": "Second", "tags": [marker]})[2]
+    status, content_type, rows = request_csv(api_url, "/notes?" + urlencode({"tag": marker, "format": "csv"}))
+    assert status == 200
+    assert content_type.startswith("text/csv")
+    assert rows == [
+        ["id", "title", "tags"],
+        [str(first["id"]), first["title"], ";".join(first["tags"])],
+        [str(second["id"]), second["title"], ";".join(second["tags"])],
+    ]
 
 
 def test_get_note_by_id_returns_created_json(api_url: str) -> None:
