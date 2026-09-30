@@ -1,8 +1,8 @@
-"""Create, list and retrieve notes through the public API."""
+"""Create, list, retrieve and update notes through the public API."""
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.storage import create_entry, get_entry, list_entries
+from app.storage import create_entry, get_entry, list_entries, update_entry
 
 router = APIRouter()
 
@@ -36,3 +36,31 @@ async def post_note(request: Request) -> dict:
     if not isinstance(tags, list) or any(not isinstance(tag, str) or not tag for tag in tags):
         raise HTTPException(status_code=400, detail="tags must be a list of nonempty strings")
     return create_entry("notes", {"title": payload["title"], "tags": tags})
+
+
+@router.patch("/notes/{id}")
+async def patch_note(id: str, request: Request) -> dict:
+    try:
+        note_id = int(id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="not found") from None
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid JSON body") from None
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="invalid JSON body")
+    changes = {}
+    if "title" in payload:
+        if not isinstance(payload["title"], str) or not payload["title"].strip():
+            raise HTTPException(status_code=400, detail="title must be a nonempty string")
+        changes["title"] = payload["title"]
+    if "tags" in payload:
+        tags = payload["tags"]
+        if not isinstance(tags, list) or any(not isinstance(tag, str) or not tag for tag in tags):
+            raise HTTPException(status_code=400, detail="tags must be a list of nonempty strings")
+        changes["tags"] = tags
+    note = update_entry("notes", note_id, changes)
+    if note is None:
+        raise HTTPException(status_code=404, detail="not found")
+    return note

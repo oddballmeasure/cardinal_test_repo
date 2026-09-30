@@ -24,3 +24,13 @@ def list_entries(collection: str) -> list[dict]:
 
 def get_entry(collection: str, entry_id: int) -> dict | None:
     return next((entry for entry in list_entries(collection) if entry["id"] == entry_id), None)
+
+
+def update_entry(collection: str, entry_id: int, values: dict) -> dict | None:
+    for position, raw_entry in enumerate(redis_client.lrange(collection, 0, -1)):
+        entry = json.loads(raw_entry)
+        if entry["id"] == entry_id:
+            updated = {**entry, **values}
+            redis_client.lset(collection, position, json.dumps(updated, ensure_ascii=False))
+            return updated
+    return None
