@@ -3,6 +3,7 @@
 import json
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -78,6 +79,57 @@ def test_frontend_is_production_built_and_api_proxy_works(web_url: str) -> None:
         response = page.request.get(web_url + "/api/health")
         assert response.status == 200
         assert response.json() == {"status": "ok"}
+        browser.close()
+
+
+def test_browser_creates_note_with_trimmed_unicode_tags(web_url: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        with page.expect_response(lambda response: response.url.endswith("/api/notes") and response.request.method == "GET"):
+            page.goto(web_url)
+        title_field = page.get_by_role("textbox", name="Title")
+        tags_field = page.get_by_role("textbox", name="Tags (comma-separated)")
+        expect(title_field).to_be_visible()
+        expect(tags_field).to_be_visible()
+        assert title_field.get_attribute("required") is not None
+        navigations = []
+        page.on("framenavigated", lambda frame: navigations.append(frame.url) if frame == page.main_frame else None)
+        title = f"Browser note {uuid4().hex}"
+        title_field.fill(title)
+        tags_field.fill("  café , , 東京 ,  🍵  , ")
+        with page.expect_response(lambda response: response.url.endswith("/api/notes") and response.request.method == "POST") as posted:
+            page.get_by_role("button", name="Create note").click()
+        response = posted.value
+        assert response.status == 201
+        assert response.request.post_data_json == {"title": title, "tags": ["café", "東京", "🍵"]}
+        created = response.json()
+        assert created == {"id": created["id"], "title": title, "tags": ["café", "東京", "🍵"]}
+        expect(page.locator("section[aria-labelledby='notes-heading'] li").filter(has_text=title)).to_contain_text(
+            "café, 東京, 🍵"
+        )
+        # The list is updated on the current page, rather than after navigation/reload.
+        assert navigations == []
+        expect(page.get_by_role("textbox", name="Title")).to_be_empty()
+        browser.close()
+
+
+def test_browser_rejects_blank_note_titles(web_url: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        with page.expect_response(lambda response: response.url.endswith("/api/notes") and response.request.method == "GET"):
+            page.goto(web_url)
+        before = page.request.get(web_url + "/api/notes").json()
+        title = page.get_by_role("textbox", name="Title")
+        tags = page.get_by_role("textbox", name="Tags (comma-separated)")
+        tags.fill("test")
+        page.get_by_role("button", name="Create note").click()
+        assert title.evaluate("element => element.validity.valueMissing")
+        title.fill("  \t  ")
+        page.get_by_role("button", name="Create note").click()
+        expect(page.get_by_role("alert")).to_contain_text("Enter a title")
+        assert page.request.get(web_url + "/api/notes").json() == before
         browser.close()
 
 

@@ -5,3 +5,22 @@ body {
   max-width: 48rem;
   padding: 2rem;
 }
+
+form {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 24rem;
+}
+
+input, button {
+  font: inherit;
+  padding: 0.4rem;
+}
+
+button {
+  justify-self: start;
+}
+
+li {
+  margin-block: 0.5rem;
+}
