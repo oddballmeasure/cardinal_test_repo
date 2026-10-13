@@ -38,6 +38,38 @@ def test_create_and_list_notes_in_order(api_url: str) -> None:
     assert request(api_url, "/notes")[2] == [first[2], second[2]]
 
 
+def get_text(base: str, path: str) -> tuple[int, str, str]:
+    with urlopen(Request(base + path), timeout=3) as response:
+        return response.status, response.headers["Content-Type"], response.read().decode("utf-8")
+
+
+def test_tag_filter_and_csv_export(api_url: str) -> None:
+    import csv
+    import io
+
+    a = request(api_url, "/notes", {"title": 'Hi, "there"\nline Café', "tags": ["TagQx", "b"]})[2]
+    request(api_url, "/notes", {"title": "home", "tags": ["homeTagQx"]})
+    c = request(api_url, "/notes", {"title": "日本", "tags": ["tagqx"]})[2]
+
+    status, ctype, body = request(api_url, "/notes?tag=TAGQX")
+    assert status == 200 and ctype == "application/json"
+    assert body == [a, c]
+
+    status, ctype, text = get_text(api_url, "/notes?tag=tagQX&format=csv")
+    assert status == 200 and ctype.startswith("text/csv")
+    rows = list(csv.reader(io.StringIO(text, newline="")))
+    assert rows == [
+        ["id", "title", "tags"],
+        [str(a["id"]), a["title"], "TagQx;b"],
+        [str(c["id"]), "日本", "tagqx"],
+    ]
+
+    assert get_text(api_url, "/notes?tag=nomatch-zz&format=csv")[2].strip() == "id,title,tags"
+    all_rows = list(csv.reader(io.StringIO(get_text(api_url, "/notes?format=csv")[2], newline="")))
+    assert all_rows[0] == ["id", "title", "tags"]
+    assert len(all_rows) == len(request(api_url, "/notes")[2]) + 1
+
+
 def test_get_note_by_id_returns_created_note_without_changing_list(api_url: str) -> None:
     created = request(api_url, "/notes", {"title": "Lookup", "tags": ["x"]})
     assert created[0] == 201
