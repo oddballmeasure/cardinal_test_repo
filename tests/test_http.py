@@ -7,12 +7,15 @@ from urllib.request import Request, urlopen
 from playwright.sync_api import expect, sync_playwright
 
 
-def request(base: str, path: str, payload: dict | None = None) -> tuple[int, str, object]:
+def request(
+    base: str, path: str, payload: dict | None = None, method: str | None = None
+) -> tuple[int, str, object]:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     req = Request(
         base + path,
         data=body,
         headers={"Content-Type": "application/json"} if body is not None else {},
+        method=method,
     )
     try:
         response = urlopen(req, timeout=3)
@@ -57,6 +60,64 @@ def test_invalid_note_does_not_change_list(api_url: str) -> None:
     status, _, body = request(api_url, "/notes", {"title": "", "tags": ["work"]})
     assert status == 400
     assert "title" in body["error"]
+    assert request(api_url, "/notes")[2] == before
+
+
+def test_patch_title_changes_only_title(api_url: str) -> None:
+    request(api_url, "/notes", {"title": "Other", "tags": []})
+    created = request(api_url, "/notes", {"title": "Old", "tags": ["keep"]})[2]
+    path = f"/notes/{created['id']}"
+    status, _, body = request(api_url, path, {"title": "new"}, method="PATCH")
+    expected = {"id": created["id"], "title": "new", "tags": ["keep"]}
+    assert (status, body) == (200, expected)
+    assert request(api_url, path)[2] == expected
+
+
+def test_patch_tags_unicode_keeps_id_and_position(api_url: str) -> None:
+    created = request(api_url, "/notes", {"title": "Pos", "tags": ["a"]})[2]
+    request(api_url, "/notes", {"title": "After", "tags": []})
+    before = request(api_url, "/notes")[2]
+    status, _, body = request(
+        api_url, f"/notes/{created['id']}", {"tags": ["é", "日本"]}, method="PATCH"
+    )
+    expected = {"id": created["id"], "title": "Pos", "tags": ["é", "日本"]}
+    assert (status, body) == (200, expected)
+    after = request(api_url, "/notes")[2]
+    assert after == [expected if n["id"] == created["id"] else n for n in before]
+
+
+def test_patch_invalid_input_returns_400_without_change(api_url: str) -> None:
+    created = request(api_url, "/notes", {"title": "Same", "tags": ["t"]})[2]
+    path = f"/notes/{created['id']}"
+    before = request(api_url, "/notes")[2]
+    for payload in (
+        {"title": ""},
+        {"title": "   "},
+        {"title": 5},
+        {"tags": "x"},
+        {"tags": [""]},
+        {"tags": [1]},
+        {"title": "changed", "tags": [""]},
+        [],
+    ):
+        assert request(api_url, path, payload, method="PATCH")[0] == 400
+    req = Request(api_url + path, data=b"{bad", method="PATCH",
+                  headers={"Content-Type": "application/json"})
+    try:
+        urlopen(req, timeout=3)
+        raise AssertionError("expected 400")
+    except HTTPError as error:
+        assert error.code == 400
+        error.close()
+    assert request(api_url, path)[2] == created
+    assert request(api_url, "/notes")[2] == before
+
+
+def test_patch_unknown_note_returns_not_found(api_url: str) -> None:
+    before = request(api_url, "/notes")[2]
+    for path in ("/notes/999999", "/notes/abc", "/notes/-1", "/notes/%D9%A1"):
+        assert request(api_url, path, {"title": "x"}, method="PATCH") == (
+            404, "application/json", {"error": "not found"})
     assert request(api_url, "/notes")[2] == before
 
 

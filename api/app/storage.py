@@ -18,5 +18,16 @@ def create_entry(collection: str, values: dict) -> dict:
     return entry
 
 
+def update_entry(collection: str, entry_id: int, values: dict) -> dict | None:
+    """Replace an entry in place, keeping its list position and id."""
+    for index, value in enumerate(redis_client.lrange(collection, 0, -1)):
+        entry = json.loads(value)
+        if entry.get("id") == entry_id:
+            updated = {**entry, **values, "id": entry_id}
+            redis_client.lset(collection, index, json.dumps(updated, ensure_ascii=False))
+            return updated
+    return None
+
+
 def list_entries(collection: str) -> list[dict]:
     return [json.loads(value) for value in redis_client.lrange(collection, 0, -1)]
