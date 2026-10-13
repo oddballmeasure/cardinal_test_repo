@@ -1,15 +1,30 @@
 """Create and list notes through the public API."""
 
+import csv
+import io
+
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response
 
 from app.storage import create_entry, list_entries, update_entry
 
 router = APIRouter()
 
 
-@router.get("/notes")
-def get_notes() -> list[dict]:
-    return list_entries("notes")
+@router.get("/notes", response_model=None)
+def get_notes(tag: str | None = None, format: str | None = None):
+    notes = list_entries("notes")
+    if tag is not None:
+        wanted = tag.casefold()
+        notes = [n for n in notes if any(isinstance(t, str) and t.casefold() == wanted for t in n.get("tags", []))]
+    if format is not None and format.lower() == "csv":
+        out = io.StringIO()
+        writer = csv.writer(out, lineterminator="\r\n")
+        writer.writerow(["id", "title", "tags"])
+        for n in notes:
+            writer.writerow([n.get("id"), n.get("title"), ";".join(n.get("tags", []))])
+        return Response(content=out.getvalue().encode("utf-8"), media_type="text/csv; charset=utf-8")
+    return notes
 
 
 @router.get("/notes/{note_id}")
