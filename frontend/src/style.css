@@ -5,3 +5,18 @@ body {
   max-width: 48rem;
   padding: 2rem;
 }
+
+form label {
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+form input {
+  display: block;
+  margin-top: 0.25rem;
+  padding: 0.25rem;
+}
+
+.error {
+  color: #b00020;
+}
