@@ -76,6 +76,60 @@ def test_frontend_is_production_built_and_api_proxy_works(web_url: str) -> None:
         browser.close()
 
 
+def test_note_form_fields_are_visible(web_url: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(web_url)
+        expect(page.get_by_label("Title")).to_be_visible()
+        expect(page.get_by_label("Tags")).to_be_visible()
+        expect(page.get_by_role("button", name="Add note")).to_be_visible()
+        browser.close()
+
+
+def test_note_form_creates_note_with_trimmed_unicode_tags(web_url: str) -> None:
+    title = "Hello form"
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(web_url)
+        page.get_by_label("Title").fill(title)
+        page.get_by_label("Tags").fill(" alpha , 日本語 , café ,, ")
+        with page.expect_response(
+            lambda r: r.url.endswith("/api/notes") and r.request.method == "POST"
+        ) as posted:
+            page.get_by_role("button", name="Add note").click()
+        assert posted.value.status == 201
+        assert posted.value.request.post_data_json == {
+            "title": title,
+            "tags": ["alpha", "日本語", "café"],
+        }
+        item = page.get_by_test_id("note").filter(has_text=title)
+        expect(item).to_have_count(1)
+        expect(item).to_contain_text("alpha, 日本語, café")
+        expect(page.get_by_label("Title")).to_have_value("")
+        expect(page.get_by_label("Tags")).to_have_value("")
+        stored = page.request.get(web_url + "/api/notes").json()
+        assert any(
+            n["title"] == title and n["tags"] == ["alpha", "日本語", "café"] for n in stored
+        )
+        browser.close()
+
+
+def test_note_form_rejects_empty_title(web_url: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(web_url)
+        before = page.request.get(web_url + "/api/notes").json()
+        page.get_by_label("Tags").fill("x")
+        page.get_by_label("Title").fill("   ")
+        page.get_by_role("button", name="Add note").click()
+        expect(page.get_by_role("alert")).to_contain_text("Title is required")
+        assert page.request.get(web_url + "/api/notes").json() == before
+        browser.close()
+
+
 def test_notes_survive_restarting_only_the_api(stack) -> None:
     note = {"title": "Redis persistence", "tags": ["infra"]}
     before = request(stack.api_url, "/notes")[2]
