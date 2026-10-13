@@ -30,6 +30,13 @@ curl http://localhost:<api-port>/notes
 It returns the created note with a numeric ID. `GET /notes` returns notes in
 creation order as JSON. API health depends on Redis being reachable.
 
+`POST /diaries` accepts a `date` (a valid `YYYY-MM-DD` calendar date) and
+nonempty string `title` and `body`. It returns 201 with the created entry
+`{"id", "date", "title", "body"}`; invalid JSON, a non-object body, an invalid
+date, or a missing/empty/non-string field returns 400 and stores nothing.
+`GET /diaries` returns entries in creation order. Diaries are stored in Redis
+and survive restarting only the API container.
+
 Run the repository's container and browser E2E checks with:
 
 ```sh
