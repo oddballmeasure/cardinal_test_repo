@@ -200,6 +200,62 @@ def test_notes_survive_restarting_only_the_api(stack) -> None:
     assert request(stack.api_url, "/notes")[2] == [*before, created]
 
 
+def test_create_and_list_diaries_in_order(stack) -> None:
+    api_url = stack.api_url  # the port changes after an API restart
+    before = request(api_url, "/diaries")[2]
+    one = {"date": "2024-02-29", "title": "Café", "body": "Leap day"}
+    two = {"date": "2024-03-01", "title": "Next", "body": "日本"}
+    first = request(api_url, "/diaries", one)
+    second = request(api_url, "/diaries", two)
+    assert first[0] == second[0] == 201
+    assert first[1] == "application/json"
+    assert {k: v for k, v in first[2].items() if k != "id"} == one
+    assert isinstance(first[2]["id"], int)
+    assert {k: v for k, v in second[2].items() if k != "id"} == two
+    assert request(api_url, "/diaries")[2] == [*before, first[2], second[2]]
+
+
+def test_invalid_diary_returns_400_without_change(stack) -> None:
+    api_url = stack.api_url  # the port changes after an API restart
+    before = request(api_url, "/diaries")[2]
+    good = {"date": "2024-01-02", "title": "T", "body": "B"}
+    for payload in (
+        {**good, "date": "2024-02-30"},
+        {**good, "date": "abc"},
+        {**good, "date": "2024-1-2"},
+        {**good, "date": 20240102},
+        {"title": "T", "body": "B"},
+        {"date": "2024-01-02", "body": "B"},
+        {"date": "2024-01-02", "title": "T"},
+        {**good, "title": ""},
+        {**good, "title": "   "},
+        {**good, "body": ""},
+        {**good, "body": 5},
+        [],
+    ):
+        status, _, body = request(api_url, "/diaries", payload)
+        assert status == 400
+        assert "error" in body
+    req = Request(api_url + "/diaries", data=b"{bad", method="POST",
+                  headers={"Content-Type": "application/json"})
+    try:
+        urlopen(req, timeout=3)
+        raise AssertionError("expected 400")
+    except HTTPError as error:
+        assert error.code == 400
+        error.close()
+    assert request(api_url, "/diaries")[2] == before
+
+
+def test_diaries_survive_restarting_only_the_api(stack) -> None:
+    diary = {"date": "2024-05-06", "title": "Persist", "body": "Redis"}
+    before = request(stack.api_url, "/diaries")[2]
+    status, _, created = request(stack.api_url, "/diaries", diary)
+    assert status == 201
+    stack.restart_api()
+    assert request(stack.api_url, "/diaries")[2] == [*before, created]
+
+
 def test_tag_stats_summarise_stored_notes(stack) -> None:
     assert request(stack.api_url, "/notes", {"title": "Stats", "tags": ["a", "b"]})[0] == 201
     notes = request(stack.api_url, "/notes")[2]
