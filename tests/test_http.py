@@ -174,9 +174,10 @@ def test_note_form_fields_are_visible(web_url: str) -> None:
         browser = playwright.chromium.launch()
         page = browser.new_page()
         page.goto(web_url)
-        expect(page.get_by_label("Title")).to_be_visible()
-        expect(page.get_by_label("Tags")).to_be_visible()
-        expect(page.get_by_role("button", name="Add note")).to_be_visible()
+        form = page.get_by_role("form", name="New note")
+        expect(form.get_by_label("Title")).to_be_visible()
+        expect(form.get_by_label("Tags")).to_be_visible()
+        expect(form.get_by_role("button", name="Add note")).to_be_visible()
         browser.close()
 
 
@@ -186,12 +187,13 @@ def test_note_form_creates_note_with_trimmed_unicode_tags(web_url: str) -> None:
         browser = playwright.chromium.launch()
         page = browser.new_page()
         page.goto(web_url)
-        page.get_by_label("Title").fill(title)
-        page.get_by_label("Tags").fill(" alpha , 日本語 , café ,, ")
+        form = page.get_by_role("form", name="New note")
+        form.get_by_label("Title").fill(title)
+        form.get_by_label("Tags").fill(" alpha , 日本語 , café ,, ")
         with page.expect_response(
             lambda r: r.url.endswith("/api/notes") and r.request.method == "POST"
         ) as posted:
-            page.get_by_role("button", name="Add note").click()
+            form.get_by_role("button", name="Add note").click()
         assert posted.value.status == 201
         assert posted.value.request.post_data_json == {
             "title": title,
@@ -200,8 +202,8 @@ def test_note_form_creates_note_with_trimmed_unicode_tags(web_url: str) -> None:
         item = page.get_by_test_id("note").filter(has_text=title)
         expect(item).to_have_count(1)
         expect(item).to_contain_text("alpha, 日本語, café")
-        expect(page.get_by_label("Title")).to_have_value("")
-        expect(page.get_by_label("Tags")).to_have_value("")
+        expect(form.get_by_label("Title")).to_have_value("")
+        expect(form.get_by_label("Tags")).to_have_value("")
         stored = page.request.get(web_url + "/api/notes").json()
         assert any(
             n["title"] == title and n["tags"] == ["alpha", "日本語", "café"] for n in stored
@@ -215,11 +217,78 @@ def test_note_form_rejects_empty_title(web_url: str) -> None:
         page = browser.new_page()
         page.goto(web_url)
         before = page.request.get(web_url + "/api/notes").json()
-        page.get_by_label("Tags").fill("x")
-        page.get_by_label("Title").fill("   ")
-        page.get_by_role("button", name="Add note").click()
-        expect(page.get_by_role("alert")).to_contain_text("Title is required")
+        form = page.get_by_role("form", name="New note")
+        form.get_by_label("Tags").fill("x")
+        form.get_by_label("Title").fill("   ")
+        form.get_by_role("button", name="Add note").click()
+        expect(form.get_by_role("alert")).to_contain_text("Title is required")
         assert page.request.get(web_url + "/api/notes").json() == before
+        browser.close()
+
+
+def test_diary_form_fields_are_visible(web_url: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(web_url)
+        form = page.get_by_role("form", name="New diary entry")
+        expect(form.get_by_label("Date")).to_be_visible()
+        expect(form.get_by_label("Title")).to_be_visible()
+        expect(form.get_by_label("Body")).to_be_visible()
+        expect(form.get_by_role("button", name="Create diary")).to_be_visible()
+        browser.close()
+
+
+def test_diary_form_creates_entry_and_it_survives_reload(web_url: str) -> None:
+    entry = {"date": "2024-02-29", "title": "Form diary é", "body": "Leap 日本 day"}
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(web_url)
+        form = page.get_by_role("form", name="New diary entry")
+        form.get_by_label("Date").fill(entry["date"])
+        form.get_by_label("Title").fill(entry["title"])
+        form.get_by_label("Body").fill(entry["body"])
+        with page.expect_response(
+            lambda r: r.url.endswith("/api/diaries") and r.request.method == "POST"
+        ) as posted:
+            form.get_by_role("button", name="Create diary").click()
+        assert posted.value.status == 201
+        assert posted.value.request.post_data_json == entry
+        items = page.get_by_role("list", name="Diary list").get_by_test_id("diary")
+        item = items.filter(has_text=entry["title"])
+        expect(item).to_have_count(1)
+        expect(item).to_contain_text(entry["date"])
+        expect(item).to_contain_text(entry["body"])
+        expect(form.get_by_label("Date")).to_have_value("")
+        expect(form.get_by_label("Title")).to_have_value("")
+        expect(form.get_by_label("Body")).to_have_value("")
+        stored = page.request.get(web_url + "/api/diaries").json()
+        assert any({k: v for k, v in d.items() if k != "id"} == entry for d in stored)
+        page.reload()
+        reloaded = (
+            page.get_by_role("list", name="Diary list")
+            .get_by_test_id("diary")
+            .filter(has_text=entry["title"])
+        )
+        expect(reloaded).to_have_count(1)
+        expect(reloaded).to_contain_text(entry["body"])
+        browser.close()
+
+
+def test_diary_form_rejects_missing_field(web_url: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(web_url)
+        before = page.request.get(web_url + "/api/diaries").json()
+        form = page.get_by_role("form", name="New diary entry")
+        form.get_by_label("Date").fill("2024-03-01")
+        form.get_by_label("Title").fill("No body")
+        form.get_by_role("button", name="Create diary").click()
+        expect(form.get_by_role("alert")).to_contain_text("Body is required")
+        expect(page.get_by_test_id("diary").filter(has_text="No body")).to_have_count(0)
+        assert page.request.get(web_url + "/api/diaries").json() == before
         browser.close()
 
 

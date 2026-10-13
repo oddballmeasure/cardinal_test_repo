@@ -2,6 +2,8 @@ import { FormEvent, useEffect, useState } from "react";
 
 type Note = { id: number; title: string; tags: string[] };
 
+type Diary = { id: number; date: string; title: string; body: string };
+
 export function parseTags(raw: string): string[] {
   return raw
     .split(",")
@@ -15,6 +17,25 @@ export default function App() {
   const [title, setTitle] = useState("");
   const [tags, setTags] = useState("");
   const [error, setError] = useState("");
+
+  const [diaries, setDiaries] = useState<Diary[]>([]);
+  const [diaryDate, setDiaryDate] = useState("");
+  const [diaryTitle, setDiaryTitle] = useState("");
+  const [diaryBody, setDiaryBody] = useState("");
+  const [diaryError, setDiaryError] = useState("");
+
+  useEffect(() => {
+    fetch("/api/diaries")
+      .then((response) => (response.ok ? response.json() : []))
+      .then((existing: Diary[]) => {
+        // Keep entries created before the initial load finished.
+        setDiaries((current) => [
+          ...existing,
+          ...current.filter((diary) => !existing.some((item) => item.id === diary.id)),
+        ]);
+      })
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     fetch("/api/notes")
@@ -52,6 +73,41 @@ export default function App() {
       setTags("");
     } catch {
       setError("Could not create note");
+    }
+  }
+
+  async function submitDiary(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (diaryDate.trim() === "") {
+      setDiaryError("Date is required");
+      return;
+    }
+    if (diaryTitle.trim() === "") {
+      setDiaryError("Title is required");
+      return;
+    }
+    if (diaryBody.trim() === "") {
+      setDiaryError("Body is required");
+      return;
+    }
+    setDiaryError("");
+    try {
+      const response = await fetch("/api/diaries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: diaryDate, title: diaryTitle, body: diaryBody }),
+      });
+      if (!response.ok) {
+        setDiaryError("Could not create diary entry");
+        return;
+      }
+      const created: Diary = await response.json();
+      setDiaries((current) => [...current, created]);
+      setDiaryDate("");
+      setDiaryTitle("");
+      setDiaryBody("");
+    } catch {
+      setDiaryError("Could not create diary entry");
     }
   }
 
@@ -93,6 +149,47 @@ export default function App() {
       </section>
       <section aria-labelledby="diaries-heading">
         <h2 id="diaries-heading">Diaries</h2>
+        <form onSubmit={submitDiary} noValidate aria-label="New diary entry">
+          <label>
+            Date
+            <input
+              type="date"
+              name="date"
+              required
+              value={diaryDate}
+              onChange={(event) => setDiaryDate(event.target.value)}
+            />
+          </label>
+          <label>
+            Title
+            <input
+              name="title"
+              required
+              value={diaryTitle}
+              onChange={(event) => setDiaryTitle(event.target.value)}
+            />
+          </label>
+          <label>
+            Body
+            <textarea
+              name="body"
+              required
+              value={diaryBody}
+              onChange={(event) => setDiaryBody(event.target.value)}
+            />
+          </label>
+          <button type="submit">Create diary</button>
+          {diaryError && <p role="alert" className="error">{diaryError}</p>}
+        </form>
+        <ul aria-label="Diary list">
+          {diaries.map((diary) => (
+            <li key={diary.id} data-testid="diary">
+              <span className="diary-date">{diary.date}</span>{" "}
+              <span className="diary-title">{diary.title}</span>{" "}
+              <span className="diary-body">{diary.body}</span>
+            </li>
+          ))}
+        </ul>
       </section>
     </main>
   );
