@@ -35,6 +35,23 @@ def test_create_and_list_notes_in_order(api_url: str) -> None:
     assert request(api_url, "/notes")[2] == [first[2], second[2]]
 
 
+def test_get_note_by_id_returns_created_note_without_changing_list(api_url: str) -> None:
+    created = request(api_url, "/notes", {"title": "Lookup", "tags": ["x"]})
+    assert created[0] == 201
+    before = request(api_url, "/notes")[2]
+    note_path = f"/notes/{created[2]['id']}"
+    assert request(api_url, note_path) == (200, "application/json", created[2])
+    assert request(api_url, note_path)[2] == created[2]
+    assert request(api_url, "/notes")[2] == before
+
+
+def test_get_unknown_or_nonnumeric_note_id_returns_not_found(api_url: str) -> None:
+    before = request(api_url, "/notes")[2]
+    for path in ("/notes/999999", "/notes/abc", "/notes/-1", "/notes/1.5"):
+        assert request(api_url, path) == (404, "application/json", {"error": "not found"})
+    assert request(api_url, "/notes")[2] == before
+
+
 def test_invalid_note_does_not_change_list(api_url: str) -> None:
     before = request(api_url, "/notes")[2]
     status, _, body = request(api_url, "/notes", {"title": "", "tags": ["work"]})

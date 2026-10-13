@@ -12,6 +12,16 @@ def get_notes() -> list[dict]:
     return list_entries("notes")
 
 
+@router.get("/notes/{note_id}")
+def get_note(note_id: str) -> dict:
+    if note_id.isascii() and note_id.isdigit():
+        wanted = int(note_id)
+        for note in list_entries("notes"):
+            if note.get("id") == wanted:
+                return note
+    raise HTTPException(status_code=404, detail="not found")
+
+
 @router.post("/notes", status_code=201)
 async def post_note(request: Request) -> dict:
     try:
